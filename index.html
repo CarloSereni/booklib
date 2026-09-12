@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蔵書ライブラリ</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --accent: #4a6fa5;
+    --text: #2b2b2b;
+    --muted: #8a8a8a;
+    --border: #e6e2da;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  #status { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  button.sync {
+    background: var(--accent); color: #fff; border: none;
+    padding: 8px 14px; border-radius: 8px; font-size: 14px;
+  }
+  button.sync:disabled { opacity: 0.5; }
+  main { padding: 8px 10px 60px; }
+  details.folder {
+    margin: 4px 0;
+    border-radius: 8px;
+  }
+  details.folder > summary {
+    padding: 8px 10px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+    background: #f0ede6;
+    border-radius: 8px;
+  }
+  details.folder[open] > summary { border-radius: 8px 8px 0 0; }
+  .folder-children { padding-left: 14px; border-left: 2px solid var(--border); margin-left: 6px; }
+  .book-card {
+    display: flex; gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    margin: 6px 0;
+    align-items: center;
+  }
+  .book-card img {
+    width: 48px; height: 68px; object-fit: cover;
+    border-radius: 4px; background: #ddd; flex-shrink: 0;
+  }
+  .book-info { flex: 1; min-width: 0; }
+  .book-title { font-size: 14px; font-weight: 600; overflow-wrap: break-word; }
+  .book-author { font-size: 12px; color: var(--muted); }
+  .store-links { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .store-links a {
+    font-size: 12px; text-decoration: none;
+    padding: 4px 8px; border-radius: 6px;
+    background: #eef2f8; color: var(--accent); border: 1px solid #d6e0ee;
+  }
+  .flag { font-size: 11px; color: #b5651d; margin-top: 4px; }
+  #empty { text-align: center; color: var(--muted); margin-top: 40px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>蔵書ライブラリ</h1>
+    <div id="status">読み込み中...</div>
+  </div>
+  <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
+</header>
+
+<main id="app"></main>
+
+<script>
+/* ==== 設定:GASのWebアプリURLをここに貼る ==== */
+const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxYkOEGfLsHuXJ2MOfbU0IG5boxQEBKs209w57F77MHSckLcgPKOdB4IQr5rrEP1REKrw/exec';
+
+const LS_KEY = 'booklib_data_v1';
+const LS_TS_KEY = 'booklib_updated_v1';
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+
+function saveLocal(data) {
+  localStorage.setItem(LS_KEY, JSON.stringify(data));
+  localStorage.setItem(LS_TS_KEY, new Date().toISOString());
+}
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
+
+// フォルダパス("漫画/少年漫画/...")からツリー構造を組み立てる
+function buildTree(rows) {
+  const root = { children: {}, books: [] };
+  rows.forEach(function (row) {
+    const path = (row['フォルダパス'] || '').split('/').filter(Boolean);
+    let node = root;
+    path.forEach(function (segment) {
+      if (!node.children[segment]) node.children[segment] = { children: {}, books: [] };
+      node = node.children[segment];
+    });
+    node.books.push(row);
+  });
+  return root;
+}
+
+function bookCardHtml(row) {
+  const cover = row['Kindle_表紙URL'] || row['BW_表紙URL'] || row['BL_表紙URL'] || '';
+  const links = [];
+  if (row['Kindle_URL']) links.push('<a href="' + row['Kindle_URL'] + '">Kindleで開く</a>');
+  if (row['BW_URL']) links.push('<a href="' + row['BW_URL'] + '">BOOK☆WALKERで開く</a>');
+  if (row['BL_URL']) links.push('<a href="' + row['BL_URL'] + '">BookLiveで開く</a>');
+  const flag = row['統合候補フラグ'] ? '<div class="flag">⚠ ' + escapeHtml(row['統合候補フラグ']) + '</div>' : '';
+  return (
+    '<div class="book-card">' +
+      (cover ? '<img loading="lazy" src="' + cover + '" alt="">' : '<div style="width:48px;height:68px;background:#ddd;border-radius:4px;flex-shrink:0;"></div>') +
+      '<div class="book-info">' +
+        '<div class="book-title">' + escapeHtml(row['タイトル'] || '(無題)') + '</div>' +
+        (row['作者'] ? '<div class="book-author">' + escapeHtml(row['作者']) + '</div>' : '') +
+        '<div class="store-links">' + links.join('') + '</div>' +
+        flag +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function renderNode(name, node, isRoot) {
+  let html = '';
+  if (!isRoot) {
+    html += '<details class="folder"><summary>📁 ' + escapeHtml(name) + '</summary><div class="folder-children">';
+  }
+  Object.keys(node.children).sort().forEach(function (childName) {
+    html += renderNode(childName, node.children[childName], false);
+  });
+  node.books.forEach(function (b) { html += bookCardHtml(b); });
+  if (!isRoot) html += '</div></details>';
+  return html;
+}
+
+function render(rows) {
+  const app = document.getElementById('app');
+  if (!rows.length) {
+    app.innerHTML = '<div id="empty">まだデータがありません。「更新」を押してWi-Fi環境で読み込んでください。</div>';
+    return;
+  }
+  const tree = buildTree(rows);
+  // 未分類(フォルダパス無し)は先頭にまとめて表示
+  const uncategorized = tree.books;
+  let html = '';
+  if (uncategorized.length) {
+    html += '<details class="folder" open><summary>📂 未分類(' + uncategorized.length + ')</summary><div class="folder-children">';
+    uncategorized.forEach(function (b) { html += bookCardHtml(b); });
+    html += '</div></details>';
+  }
+  Object.keys(tree.children).sort().forEach(function (name) {
+    html += renderNode(name, tree.children[name], false);
+  });
+  app.innerHTML = html;
+}
+
+async function syncNow() {
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true;
+  setStatus('通信中... データを取得しています');
+  try {
+    const res = await fetch(GAS_WEBAPP_URL, { cache: 'no-store' });
+    const data = await res.json();
+    saveLocal(data);
+
+    // 表紙画像をservice worker経由でキャッシュ(表示することでcache-first fetchが走る)
+    setStatus('画像をキャッシュしています... (' + data.length + '冊)');
+    render(data);
+
+    setStatus('更新完了: ' + new Date().toLocaleString('ja-JP'));
+  } catch (e) {
+    setStatus('更新に失敗しました: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function init() {
+  const rows = loadLocal();
+  const ts = localStorage.getItem(LS_TS_KEY);
+  setStatus(ts ? ('最終更新: ' + new Date(ts).toLocaleString('ja-JP')) : 'まだ更新されていません');
+  render(rows);
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function (e) {
+      console.warn('service worker登録失敗', e);
+    });
+  }
+}
+
+init();
+</script>
+</body>
+</html>

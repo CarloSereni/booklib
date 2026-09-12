@@ -1,0 +1,9 @@
+{
+  "name": "蔵書ライブラリ",
+  "short_name": "蔵書",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#faf9f6",
+  "theme_color": "#4a6fa5",
+  "icons": []
+}
