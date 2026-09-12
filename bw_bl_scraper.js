@@ -15,55 +15,61 @@
  */
 
 function scrapeBookWalkerShelf() {
-  // ダミーのセレクタ例。実際のクラス名に置き換える必要があります。
-  const items = document.querySelectorAll('.o-tile, .p-book-shelf-item, li.book-item');
+  const items = document.querySelectorAll('section.book-item');
   const entries = [];
   items.forEach(function (el) {
-    const linkEl = el.querySelector('a[href*="bookwalker.jp/de"]');
-    const imgEl = el.querySelector('img');
-    const titleEl = el.querySelector('.title, .p-book-shelf-item__title') || imgEl;
+    const linkEl = el.querySelector('.book-tl h2 a');
     if (!linkEl) return;
-    const m = linkEl.href.match(/bookwalker\.jp\/(de[0-9a-f-]+)/i);
+    const href = linkEl.getAttribute('href') || '';
+    const m = href.match(/bookwalker\.jp\/(de[0-9a-f-]+)/i);
+    if (!m) return;
+    const imgEl = el.querySelector('.book-img img');
+    const authorEl = el.querySelector('.book-meta-item-author');
     entries.push({
       store: 'bw',
-      bwId: m ? m[1] : '',
-      title: (titleEl && (titleEl.alt || titleEl.textContent) || '').trim(),
-      coverUrl: imgEl ? imgEl.src : '',
-      author: ''
+      bwId: m[1],
+      title: linkEl.textContent.trim(),
+      author: authorEl ? authorEl.textContent.trim() : '',
+      coverUrl: imgEl ? imgEl.src : ''
     });
   });
-  console.log('BOOK☆WALKER: ' + entries.length + '件抽出');
+  console.log('BOOK☆WALKER: ' + entries.length + '件抽出(このページ分)');
   console.table(entries);
   return entries;
 }
 
 function scrapeBookLiveShelf() {
-  // ダミーのセレクタ例。実際のクラス名に置き換える必要があります。
-  const items = document.querySelectorAll('.bookshelf-item, li.book-list-item');
+  const items = document.querySelectorAll('li.item');
   const entries = [];
   items.forEach(function (el) {
-    const linkEl = el.querySelector('a[href*="title_id"]');
-    const imgEl = el.querySelector('img');
-    const titleEl = el.querySelector('.title, .book-title') || imgEl;
+    const linkEl = el.querySelector('.title a.sl-title1');
     if (!linkEl) return;
-    const m = linkEl.href.match(/title_id\/(\d+)\/vol_no\/(\d+)/);
+    const href = linkEl.getAttribute('href') || '';
+    const m = href.match(/title_id\/(\d+)\/vol_no\/(\d+)/);
+    if (!m) return;
+    const imgEl = el.querySelector('.picture img');
+    const authorEl = el.querySelector('a[href*="/focus/author/"]');
+    // レーベル(雑誌名)らしきリンク。k_idsのリンクテキストがCode.gsのLABEL_FOLDER_RULESと一致する
+    const labelEl = el.querySelector('a[href*="/search/keyword/k_ids/"]');
     entries.push({
       store: 'bl',
-      blTitleId: m ? m[1] : '',
-      blVolNo: m ? m[2] : '',
-      title: (titleEl && (titleEl.alt || titleEl.textContent) || '').trim(),
+      blTitleId: m[1],
+      blVolNo: m[2],
+      // alt属性に「タイトル: 巻数」の形で入っているのでそのまま使う(無ければリンクの文字を使う)
+      title: (imgEl && imgEl.alt) ? imgEl.alt.trim() : linkEl.textContent.trim(),
+      author: authorEl ? authorEl.textContent.trim() : '',
       coverUrl: imgEl ? imgEl.src : '',
-      author: ''
+      label: labelEl ? labelEl.textContent.trim() : ''
     });
   });
-  console.log('BookLive: ' + entries.length + '件抽出');
+  console.log('BookLive: ' + entries.length + '件抽出(このページ分)');
   console.table(entries);
   return entries;
 }
 
 // GASのWeb App URLに送信する(setupSheet実行後、Web Appとしてデプロイしたexec URLを設定)
 async function sendToGas(entries) {
-  const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxYkOEGfLsHuXJ2MOfbU0IG5boxQEBKs209w57F77MHSckLcgPKOdB4IQr5rrEP1REKrw/exec';
+  const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec';
   const res = await fetch(GAS_WEBAPP_URL, {
     method: 'POST',
     body: JSON.stringify({ entries: entries })
