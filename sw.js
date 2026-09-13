@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'booklib-shell-v1';
+const SHELL_CACHE = 'booklib-shell-v2';
 const IMAGE_CACHE = 'booklib-images-v1';
 const SHELL_FILES = ['./', './index.html', './manifest.json'];
 
@@ -24,8 +24,9 @@ self.addEventListener('activate', function (event) {
   self.clients.claim();
 });
 
-// 画像は「キャッシュ優先、無ければネットワークで取得してキャッシュに保存」
-// アプリ本体(html等)は「まずキャッシュ、更新があればバックグラウンドで差し替え」
+// 画像は「キャッシュ優先、無ければネットワークで取得してキャッシュに保存」(表紙画像は変わらないため)
+// アプリ本体(html/js/manifest)は「ネットワーク優先、オフラインの時だけキャッシュにフォールバック」
+// これにより、GitHub側を更新すればオンライン時は常に最新版が反映される
 self.addEventListener('fetch', function (event) {
   const req = event.request;
   const isImage = req.destination === 'image';
@@ -36,7 +37,6 @@ self.addEventListener('fetch', function (event) {
         return cache.match(req).then(function (cached) {
           if (cached) return cached;
           return fetch(req).then(function (res) {
-            // オフライン時などレスポンスが得られなければそのまま失敗させる
             if (res && res.status === 200) cache.put(req, res.clone());
             return res;
           }).catch(function () {
@@ -49,8 +49,13 @@ self.addEventListener('fetch', function (event) {
   }
 
   event.respondWith(
-    caches.match(req).then(function (cached) {
-      return cached || fetch(req);
+    fetch(req).then(function (res) {
+      if (res && res.status === 200) {
+        caches.open(SHELL_CACHE).then(function (cache) { cache.put(req, res.clone()); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(req); // オフライン時のみキャッシュから返す
     })
   );
 });
