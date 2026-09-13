@@ -47,6 +47,9 @@
     list-style: none;
     background: #f0ede6;
     border-radius: 8px;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   details.folder[open] > summary { border-radius: 8px 8px 0 0; }
   .folder-children { padding-left: 14px; border-left: 2px solid var(--border); margin-left: 6px; }
@@ -58,6 +61,9 @@
     padding: 8px;
     margin: 6px 0;
     align-items: center;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   .book-card img {
     width: 48px; height: 68px; object-fit: cover;
@@ -71,9 +77,41 @@
     font-size: 12px; text-decoration: none;
     padding: 4px 8px; border-radius: 6px;
     background: #eef2f8; color: var(--accent); border: 1px solid #d6e0ee;
+    -webkit-user-select: text; user-select: text;
   }
   .flag { font-size: 11px; color: #b5651d; margin-top: 4px; }
   #empty { text-align: center; color: var(--muted); margin-top: 40px; font-size: 14px; }
+
+  /* 長押しで開く分類修正モーダル */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+    display: flex; align-items: flex-end; justify-content: center;
+    z-index: 100;
+  }
+  .modal-overlay.hidden { display: none; }
+  .modal-box {
+    background: #fff; width: 100%; max-width: 480px;
+    border-radius: 14px 14px 0 0; padding: 16px;
+    max-height: 82vh; overflow: auto;
+  }
+  .modal-box h2 { font-size: 15px; margin: 0 0 10px; }
+  .modal-breadcrumb {
+    font-size: 13px; color: var(--muted); margin-bottom: 12px;
+    word-break: break-all; background: #f5f3ee; padding: 8px 10px; border-radius: 8px;
+  }
+  .modal-box label {
+    display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;
+  }
+  .modal-box select, .modal-box input[type="text"] {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; margin-bottom: 12px; background: #fff;
+  }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal-actions button {
+    padding: 9px 16px; border-radius: 8px; border: none; font-size: 14px;
+  }
+  .modal-actions .cancel { background: #eee; color: #333; }
+  .modal-actions .submit { background: var(--accent); color: #fff; }
 </style>
 </head>
 <body>
@@ -92,6 +130,27 @@
 </div>
 
 <main id="app"></main>
+
+<!-- 本カード・フォルダを長押し(またはPCでは右クリック)すると開く分類修正モーダル -->
+<div class="modal-overlay hidden" id="editModal">
+  <div class="modal-box">
+    <h2 id="editModalTitle">分類を変更</h2>
+    <div class="modal-breadcrumb" id="editModalCurrent"></div>
+
+    <label for="editPathSelect">既存のフォルダから選ぶ</label>
+    <select id="editPathSelect">
+      <option value="">-- 選択してください --</option>
+    </select>
+
+    <label for="editPathInput">または直接入力(「/」区切り。例: 漫画/少年漫画/少年ジャンプ/るろうに剣心)</label>
+    <input type="text" id="editPathInput" placeholder="漫画/少年漫画/少年ジャンプ/るろうに剣心">
+
+    <div class="modal-actions">
+      <button class="cancel" onclick="closeEditModal()">キャンセル</button>
+      <button class="submit" onclick="submitEdit()">送信</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ==== 設定:GASのWebアプリURLをここに貼る ==== */
@@ -139,7 +198,7 @@ function bookCardHtml(row) {
   if (row['BL_URL']) links.push('<a href="' + row['BL_URL'] + '" target="_blank" rel="noopener">BookLiveで開く</a>');
   const flag = row['統合候補フラグ'] ? '<div class="flag">⚠ ' + escapeHtml(row['統合候補フラグ']) + '</div>' : '';
   return (
-    '<div class="book-card">' +
+    '<div class="book-card" data-id="' + escapeHtml(row['id'] || '') + '" data-path="' + escapeHtml(row['フォルダパス'] || '') + '">' +
       (cover ? '<img loading="lazy" src="' + cover + '" alt="">' : '<div style="width:48px;height:68px;background:#ddd;border-radius:4px;flex-shrink:0;"></div>') +
       '<div class="book-info">' +
         '<div class="book-title">' + escapeHtml(row['タイトル'] || '(無題)') + '</div>' +
@@ -157,13 +216,15 @@ function escapeHtml(s) {
   });
 }
 
-function renderNode(name, node, isRoot) {
+// parentPathを引き継いでこのフォルダのフルパス(スプレッドシートの「フォルダパス」列と同じ形式)を組み立てる
+function renderNode(name, node, isRoot, parentPath) {
   let html = '';
+  const fullPath = parentPath ? parentPath + '/' + name : name;
   if (!isRoot) {
-    html += '<details class="folder"><summary>📁 ' + escapeHtml(name) + '</summary><div class="folder-children">';
+    html += '<details class="folder"><summary data-path="' + escapeHtml(fullPath) + '">📁 ' + escapeHtml(name) + '</summary><div class="folder-children">';
   }
   Object.keys(node.children).sort().forEach(function (childName) {
-    html += renderNode(childName, node.children[childName], false);
+    html += renderNode(childName, node.children[childName], false, fullPath);
   });
   node.books.forEach(function (b) { html += bookCardHtml(b); });
   if (!isRoot) html += '</div></details>';
@@ -216,7 +277,7 @@ function renderFiltered(query) {
       html += '</div></details>';
     }
     Object.keys(tree.children).sort().forEach(function (name) {
-      html += renderNode(name, tree.children[name], false);
+      html += renderNode(name, tree.children[name], false, '');
     });
     app.innerHTML = html;
   } catch (e) {
@@ -236,6 +297,150 @@ const searchBoxEl = document.getElementById('searchBox');
 ['input', 'keyup', 'change', 'compositionend'].forEach(function (evtName) {
   searchBoxEl.addEventListener(evtName, onSearchInput);
 });
+
+// ------------------------------------------------------------------
+// 長押し(またはPCでの右クリック)で分類修正モーダルを開く
+// ------------------------------------------------------------------
+let pressTimer = null;
+let pressTriggered = false;
+
+function attachLongPressHandlers() {
+  const app = document.getElementById('app');
+
+  const start = function (e) {
+    pressTriggered = false;
+    const card = e.target.closest('.book-card');
+    const summary = e.target.closest('details.folder > summary');
+    if (!card && !summary) return;
+    pressTimer = setTimeout(function () {
+      pressTriggered = true;
+      if (card) {
+        openBookEditor(card.dataset.id, card.dataset.path);
+      } else if (summary) {
+        openFolderEditor(summary.dataset.path);
+      }
+    }, 550);
+  };
+  const cancel = function () { clearTimeout(pressTimer); };
+
+  app.addEventListener('touchstart', start, { passive: true });
+  app.addEventListener('mousedown', start);
+  ['touchend', 'touchmove', 'mouseup', 'mouseleave'].forEach(function (evt) {
+    app.addEventListener(evt, cancel);
+  });
+
+  // PCでは右クリックでも同じモーダルを開けるようにする(長押しの代替)
+  app.addEventListener('contextmenu', function (e) {
+    const card = e.target.closest('.book-card');
+    const summary = e.target.closest('details.folder > summary');
+    if (card || summary) {
+      e.preventDefault();
+      if (card) openBookEditor(card.dataset.id, card.dataset.path);
+      else openFolderEditor(summary.dataset.path);
+    }
+  });
+
+  // 長押しが発火した直後の click(フォルダの開閉やリンクの誤発火)を1回だけ抑制する
+  app.addEventListener('click', function (e) {
+    if (pressTriggered) {
+      e.preventDefault();
+      e.stopPropagation();
+      pressTriggered = false;
+    }
+  }, true);
+}
+
+let editTarget = null; // { type: 'book', id, oldPath } または { type: 'folder', oldPath }
+
+function collectDistinctPaths() {
+  const set = new Set();
+  currentRows.forEach(function (r) {
+    if (r['フォルダパス']) set.add(r['フォルダパス']);
+  });
+  return Array.from(set).sort();
+}
+
+function populatePathSelect(selectedPath) {
+  const sel = document.getElementById('editPathSelect');
+  sel.innerHTML = '<option value="">-- 選択してください --</option>';
+  collectDistinctPaths().forEach(function (p) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p.replace(/\//g, ' ＞ ');
+    if (p === selectedPath) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function openBookEditor(id, currentPath) {
+  editTarget = { type: 'book', id: id, oldPath: currentPath || '' };
+  document.getElementById('editModalTitle').textContent = '本の分類を変更';
+  document.getElementById('editModalCurrent').textContent =
+    '現在: ' + (currentPath ? currentPath.replace(/\//g, ' ＞ ') : '(未分類)');
+  populatePathSelect(currentPath);
+  document.getElementById('editPathInput').value = currentPath || '';
+  document.getElementById('editModal').classList.remove('hidden');
+}
+
+function openFolderEditor(path) {
+  if (!path) return; // 「未分類」フォルダなど、パスを持たない見出しは対象外
+  editTarget = { type: 'folder', oldPath: path };
+  document.getElementById('editModalTitle').textContent = 'フォルダごと分類を変更(配下の本すべてが対象)';
+  document.getElementById('editModalCurrent').textContent = '現在: ' + path.replace(/\//g, ' ＞ ');
+  populatePathSelect(path);
+  document.getElementById('editPathInput').value = path;
+  document.getElementById('editModal').classList.remove('hidden');
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').classList.add('hidden');
+  editTarget = null;
+}
+
+document.getElementById('editPathSelect').addEventListener('change', function () {
+  if (this.value) document.getElementById('editPathInput').value = this.value;
+});
+
+async function submitEdit() {
+  if (!editTarget) return;
+  const newPath = document.getElementById('editPathInput').value.trim().replace(/^\/+|\/+$/g, '');
+  if (!newPath) { alert('フォルダパスを入力してください。'); return; }
+
+  const payload = editTarget.type === 'book'
+    ? { action: 'moveBook', id: editTarget.id, newPath: newPath }
+    : { action: 'moveFolder', oldPath: editTarget.oldPath, newPath: newPath };
+
+  setStatus('スプレッドシートに反映しています...');
+  try {
+    const res = await fetch(GAS_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // preflightを避けるためtext/plainで送る(doPost側でJSONとしてparseする)
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '不明なエラー');
+
+    // スプレッドシート側と同じ内容でローカルのキャッシュも更新し、画面に即反映する
+    const rows = loadLocal();
+    if (editTarget.type === 'book') {
+      rows.forEach(function (r) { if (String(r['id']) === String(editTarget.id)) r['フォルダパス'] = newPath; });
+    } else {
+      const oldPath = editTarget.oldPath;
+      rows.forEach(function (r) {
+        const p = String(r['フォルダパス'] || '');
+        if (p === oldPath) r['フォルダパス'] = newPath;
+        else if (p.indexOf(oldPath + '/') === 0) r['フォルダパス'] = newPath + p.slice(oldPath.length);
+      });
+    }
+    saveLocal(rows);
+    render(rows);
+    closeEditModal();
+    setStatus('分類を変更しました: ' + new Date().toLocaleString('ja-JP'));
+  } catch (e) {
+    setStatus('変更の送信に失敗しました: ' + e.message);
+    alert('送信に失敗しました。Wi-Fi環境を確認して、もう一度お試しください。(' + e.message + ')');
+  }
+}
 
 async function syncNow() {
   const btn = document.getElementById('syncBtn');
@@ -263,6 +468,7 @@ function init() {
   const ts = localStorage.getItem(LS_TS_KEY);
   setStatus(ts ? ('最終更新: ' + new Date(ts).toLocaleString('ja-JP')) : 'まだ更新されていません');
   render(rows);
+  attachLongPressHandlers();
 
   if ('serviceWorker' in navigator) {
     // updateViaCache:'none' + update() で、sw.js自体が古いままキャッシュされて
