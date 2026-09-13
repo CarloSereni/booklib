@@ -86,11 +86,17 @@
   <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
 </header>
 
+<div style="padding: 8px 10px 0;">
+  <input type="text" id="searchBox" placeholder="タイトル・作者で検索"
+    style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #e6e2da; border-radius:8px; font-size:14px;"
+    oninput="onSearchInput()">
+</div>
+
 <main id="app"></main>
 
 <script>
 /* ==== 設定:GASのWebアプリURLをここに貼る ==== */
-const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxYkOEGfLsHuXJ2MOfbU0IG5boxQEBKs209w57F77MHSckLcgPKOdB4IQr5rrEP1REKrw/exec';
+const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXX/exec';
 
 const LS_KEY = 'booklib_data_v1';
 const LS_TS_KEY = 'booklib_updated_v1';
@@ -129,9 +135,9 @@ function buildTree(rows) {
 function bookCardHtml(row) {
   const cover = row['Kindle_表紙URL'] || row['BW_表紙URL'] || row['BL_表紙URL'] || '';
   const links = [];
-  if (row['Kindle_URL']) links.push('<a href="' + row['Kindle_URL'] + '">Kindleで開く</a>');
-  if (row['BW_URL']) links.push('<a href="' + row['BW_URL'] + '">BOOK☆WALKERで開く</a>');
-  if (row['BL_URL']) links.push('<a href="' + row['BL_URL'] + '">BookLiveで開く</a>');
+  if (row['Kindle_URL']) links.push('<a href="' + row['Kindle_URL'] + '" target="_blank" rel="noopener">Kindleで開く</a>');
+  if (row['BW_URL']) links.push('<a href="' + row['BW_URL'] + '" target="_blank" rel="noopener">BOOK☆WALKERで開く</a>');
+  if (row['BL_URL']) links.push('<a href="' + row['BL_URL'] + '" target="_blank" rel="noopener">BookLiveで開く</a>');
   const flag = row['統合候補フラグ'] ? '<div class="flag">⚠ ' + escapeHtml(row['統合候補フラグ']) + '</div>' : '';
   return (
     '<div class="book-card">' +
@@ -165,13 +171,41 @@ function renderNode(name, node, isRoot) {
   return html;
 }
 
+let currentRows = []; // 検索フィルタのために現在表示中のデータを保持しておく
+
 function render(rows) {
+  currentRows = rows;
+  renderFiltered(document.getElementById('searchBox').value);
+}
+
+function renderFiltered(query) {
   const app = document.getElementById('app');
-  if (!rows.length) {
+  if (!currentRows.length) {
     app.innerHTML = '<div id="empty">まだデータがありません。「更新」を押してWi-Fi環境で読み込んでください。</div>';
     return;
   }
-  const tree = buildTree(rows);
+
+  const q = (query || '').trim().toLowerCase();
+
+  if (q) {
+    // 検索中はフォルダ分けせず、一致した本だけを一覧表示する
+    const matched = currentRows.filter(function (r) {
+      const title = (r['タイトル'] || '').toLowerCase();
+      const author = (r['作者'] || '').toLowerCase();
+      const series = (r['シリーズ名'] || '').toLowerCase();
+      return title.indexOf(q) !== -1 || author.indexOf(q) !== -1 || series.indexOf(q) !== -1;
+    });
+    let html = '<div style="padding:4px 0 8px; font-size:13px; color:#8a8a8a;">' + matched.length + '件ヒット</div>';
+    if (!matched.length) {
+      html += '<div id="empty">一致する本が見つかりませんでした。</div>';
+    } else {
+      matched.forEach(function (b) { html += bookCardHtml(b); });
+    }
+    app.innerHTML = html;
+    return;
+  }
+
+  const tree = buildTree(currentRows);
   // 未分類(フォルダパス無し)は先頭にまとめて表示
   const uncategorized = tree.books;
   let html = '';
@@ -184,6 +218,10 @@ function render(rows) {
     html += renderNode(name, tree.children[name], false);
   });
   app.innerHTML = html;
+}
+
+function onSearchInput() {
+  renderFiltered(document.getElementById('searchBox').value);
 }
 
 async function syncNow() {
