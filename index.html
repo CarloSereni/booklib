@@ -87,9 +87,8 @@
 </header>
 
 <div style="padding: 8px 10px 0;">
-  <input type="text" id="searchBox" placeholder="タイトル・作者で検索"
-    style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #e6e2da; border-radius:8px; font-size:14px;"
-    oninput="onSearchInput()">
+  <input type="search" id="searchBox" placeholder="タイトル・作者で検索" autocomplete="off"
+    style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #e6e2da; border-radius:8px; font-size:14px;">
 </div>
 
 <main id="app"></main>
@@ -180,49 +179,63 @@ function render(rows) {
 
 function renderFiltered(query) {
   const app = document.getElementById('app');
-  if (!currentRows.length) {
-    app.innerHTML = '<div id="empty">まだデータがありません。「更新」を押してWi-Fi環境で読み込んでください。</div>';
-    return;
-  }
-
-  const q = (query || '').trim().toLowerCase();
-
-  if (q) {
-    // 検索中はフォルダ分けせず、一致した本だけを一覧表示する
-    const matched = currentRows.filter(function (r) {
-      const title = String(r['タイトル'] || '').toLowerCase();
-      const author = String(r['作者'] || '').toLowerCase();
-      const series = String(r['シリーズ名'] || '').toLowerCase();
-      return title.indexOf(q) !== -1 || author.indexOf(q) !== -1 || series.indexOf(q) !== -1;
-    });
-    let html = '<div style="padding:4px 0 8px; font-size:13px; color:#8a8a8a;">' + matched.length + '件ヒット</div>';
-    if (!matched.length) {
-      html += '<div id="empty">一致する本が見つかりませんでした。</div>';
-    } else {
-      matched.forEach(function (b) { html += bookCardHtml(b); });
+  try {
+    if (!currentRows.length) {
+      app.innerHTML = '<div id="empty">まだデータがありません。「更新」を押してWi-Fi環境で読み込んでください。</div>';
+      return;
     }
-    app.innerHTML = html;
-    return;
-  }
 
-  const tree = buildTree(currentRows);
-  // 未分類(フォルダパス無し)は先頭にまとめて表示
-  const uncategorized = tree.books;
-  let html = '';
-  if (uncategorized.length) {
-    html += '<details class="folder" open><summary>📂 未分類(' + uncategorized.length + ')</summary><div class="folder-children">';
-    uncategorized.forEach(function (b) { html += bookCardHtml(b); });
-    html += '</div></details>';
+    // 全角スペースも区切りとして扱い、前後の空白を除去
+    const q = (query || '').replace(/\u3000/g, ' ').trim().toLowerCase();
+
+    if (q) {
+      // 検索中はフォルダ分けせず、一致した本だけを一覧表示する
+      const matched = currentRows.filter(function (r) {
+        const title = String(r['タイトル'] || '').toLowerCase();
+        const author = String(r['作者'] || '').toLowerCase();
+        const series = String(r['シリーズ名'] || '').toLowerCase();
+        return title.indexOf(q) !== -1 || author.indexOf(q) !== -1 || series.indexOf(q) !== -1;
+      });
+      let html = '<div style="padding:4px 0 8px; font-size:13px; color:#8a8a8a;">' + matched.length + '件ヒット</div>';
+      if (!matched.length) {
+        html += '<div id="empty">一致する本が見つかりませんでした。</div>';
+      } else {
+        matched.forEach(function (b) { html += bookCardHtml(b); });
+      }
+      app.innerHTML = html;
+      return;
+    }
+
+    const tree = buildTree(currentRows);
+    // 未分類(フォルダパス無し)は先頭にまとめて表示
+    const uncategorized = tree.books;
+    let html = '';
+    if (uncategorized.length) {
+      html += '<details class="folder" open><summary>📂 未分類(' + uncategorized.length + ')</summary><div class="folder-children">';
+      uncategorized.forEach(function (b) { html += bookCardHtml(b); });
+      html += '</div></details>';
+    }
+    Object.keys(tree.children).sort().forEach(function (name) {
+      html += renderNode(name, tree.children[name], false);
+    });
+    app.innerHTML = html;
+  } catch (e) {
+    // 検索処理でエラーが起きても画面が固まらないよう、原因を表示する
+    console.error('renderFiltered error', e);
+    setStatus('検索処理でエラーが発生しました: ' + e.message);
   }
-  Object.keys(tree.children).sort().forEach(function (name) {
-    html += renderNode(name, tree.children[name], false);
-  });
-  app.innerHTML = html;
 }
 
 function onSearchInput() {
-  renderFiltered(document.getElementById('searchBox').value);
+  renderFiltered(searchBoxEl.value);
 }
+
+// oninput属性ではなく addEventListener で複数イベントに登録することで、
+// 一部のブラウザ/WebViewで input イベントが安定して発火しない場合にも対応する
+const searchBoxEl = document.getElementById('searchBox');
+['input', 'keyup', 'change', 'compositionend'].forEach(function (evtName) {
+  searchBoxEl.addEventListener(evtName, onSearchInput);
+});
 
 async function syncNow() {
   const btn = document.getElementById('syncBtn');
@@ -252,7 +265,11 @@ function init() {
   render(rows);
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(function (e) {
+    // updateViaCache:'none' + update() で、sw.js自体が古いままキャッシュされて
+    // 修正が反映されない事態を防ぐ(インストール済みPWAでよくある「直したのに変わらない」原因)
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+      reg.update();
+    }).catch(function (e) {
       console.warn('service worker登録失敗', e);
     });
   }
