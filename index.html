@@ -121,7 +121,7 @@ function setStatus(text) {
 function buildTree(rows) {
   const root = { children: {}, books: [] };
   rows.forEach(function (row) {
-    const path = (row['フォルダパス'] || '').split('/').filter(Boolean);
+    const path = String(row['フォルダパス'] || '').split('/').filter(Boolean);
     let node = root;
     path.forEach(function (segment) {
       if (!node.children[segment]) node.children[segment] = { children: {}, books: [] };
@@ -190,9 +190,9 @@ function renderFiltered(query) {
   if (q) {
     // 検索中はフォルダ分けせず、一致した本だけを一覧表示する
     const matched = currentRows.filter(function (r) {
-      const title = (r['タイトル'] || '').toLowerCase();
-      const author = (r['作者'] || '').toLowerCase();
-      const series = (r['シリーズ名'] || '').toLowerCase();
+      const title = String(r['タイトル'] || '').toLowerCase();
+      const author = String(r['作者'] || '').toLowerCase();
+      const series = String(r['シリーズ名'] || '').toLowerCase();
       return title.indexOf(q) !== -1 || author.indexOf(q) !== -1 || series.indexOf(q) !== -1;
     });
     let html = '<div style="padding:4px 0 8px; font-size:13px; color:#8a8a8a;">' + matched.length + '件ヒット</div>';
