@@ -112,6 +112,44 @@
   }
   .modal-actions .cancel { background: #eee; color: #333; }
   .modal-actions .submit { background: var(--accent); color: #fff; }
+
+  /* 統合(マージ)モード */
+  button.merge-toggle {
+    background: #fff; color: var(--accent); border: 1px solid var(--accent);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-right: 8px;
+  }
+  button.merge-toggle.active { background: var(--accent); color: #fff; }
+  .header-actions { display: flex; align-items: center; }
+
+  .merge-bar {
+    background: #fff7e6; border-bottom: 1px solid var(--border);
+    padding: 8px 14px; display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px;
+  }
+  .merge-bar.hidden { display: none; }
+  .merge-bar-actions button {
+    margin-left: 8px; padding: 6px 12px; border-radius: 8px; border: none; font-size: 13px;
+  }
+  .merge-bar-actions button:first-child { background: #eee; color: #333; }
+  .merge-bar-actions button:last-child { background: var(--accent); color: #fff; }
+  .merge-bar-actions button:disabled { opacity: 0.4; }
+
+  .book-card.selected { border-color: var(--accent); border-width: 2px; background: #eef2f8; }
+
+  .merge-books { display: flex; gap: 10px; margin-bottom: 12px; }
+  .merge-book-preview { flex: 1; text-align: center; font-size: 12px; }
+  .merge-book-preview img { width: 56px; height: 80px; object-fit: cover; border-radius: 6px; background: #ddd; }
+  .merge-book-noimg { width: 56px; height: 80px; border-radius: 6px; background: #ddd; margin: 0 auto; }
+  .merge-book-label { font-weight: 700; margin-bottom: 4px; }
+  .merge-book-title { font-size: 12px; font-weight: 600; margin-top: 4px; word-break: break-all; }
+  .merge-book-stores { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .merge-field { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .merge-field-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .merge-field-fixed { font-size: 14px; }
+  .merge-radio { display: block; font-size: 13px; margin-bottom: 4px; }
+  .merge-source { color: var(--muted); font-size: 11px; }
+  .merge-note { font-size: 12px; color: #b5651d; margin: 10px 0; }
 </style>
 </head>
 <body>
@@ -121,8 +159,19 @@
     <h1>蔵書ライブラリ</h1>
     <div id="status">読み込み中...</div>
   </div>
-  <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
+  <div class="header-actions">
+    <button class="merge-toggle" id="mergeModeBtn" onclick="toggleMergeMode()">統合</button>
+    <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
+  </div>
 </header>
+
+<div class="merge-bar hidden" id="mergeBar">
+  <span id="mergeBarStatus">0/2冊選択中</span>
+  <div class="merge-bar-actions">
+    <button onclick="cancelMergeMode()">キャンセル</button>
+    <button id="mergeGoBtn" onclick="startMergeConfirm()" disabled>統合する</button>
+  </div>
+</div>
 
 <div style="padding: 8px 10px 0;">
   <input type="search" id="searchBox" placeholder="タイトル・作者で検索" autocomplete="off"
@@ -150,6 +199,11 @@
       <button class="submit" onclick="submitEdit()">送信</button>
     </div>
   </div>
+</div>
+
+<!-- 統合(マージ)の最終確認モーダル。中身はJSで動的に生成する -->
+<div class="modal-overlay hidden" id="mergeModal">
+  <div class="modal-box" id="mergeModalBox"></div>
 </div>
 
 <script>
@@ -308,6 +362,7 @@ function attachLongPressHandlers() {
   const app = document.getElementById('app');
 
   const start = function (e) {
+    if (mergeModeActive) return; // 統合モード中は長押しでの分類修正モーダルを開かない
     pressTriggered = false;
     const card = e.target.closest('.book-card');
     const summary = e.target.closest('details.folder > summary');
@@ -348,6 +403,193 @@ function attachLongPressHandlers() {
       pressTriggered = false;
     }
   }, true);
+
+  // 統合モード中は、本カードをタップすると(リンクを踏まずに)選択/解除する
+  app.addEventListener('click', function (e) {
+    if (!mergeModeActive) return;
+    const card = e.target.closest('.book-card');
+    if (!card) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toggleBookSelection(card);
+  }, true);
+}
+
+// ------------------------------------------------------------------
+// 重複した本の統合(マージ)モード
+// ------------------------------------------------------------------
+let mergeModeActive = false;
+let selectedForMerge = []; // 選択中の本のid(最大2件)
+let mergePair = null; // 確認モーダル表示中に保持する { aId, bId }
+
+const MERGE_FIELD_DEFS = [
+  { key: 'タイトル', id: 'title', label: 'タイトル' },
+  { key: '作者', id: 'author', label: '作者' },
+  { key: 'シリーズ名', id: 'series', label: 'シリーズ名' },
+  { key: '巻数', id: 'volume', label: '巻数' },
+  { key: 'フォルダパス', id: 'folderPath', label: 'フォルダパス' },
+  { key: 'レーベル', id: 'label', label: 'レーベル' }
+];
+
+function toggleMergeMode() {
+  mergeModeActive = !mergeModeActive;
+  selectedForMerge = [];
+  document.getElementById('mergeBar').classList.toggle('hidden', !mergeModeActive);
+  document.getElementById('mergeModeBtn').classList.toggle('active', mergeModeActive);
+  document.getElementById('mergeModeBtn').textContent = mergeModeActive ? '統合モード中' : '統合';
+  document.querySelectorAll('.book-card.selected').forEach(function (el) { el.classList.remove('selected'); });
+  updateMergeBarUI();
+}
+
+function cancelMergeMode() {
+  if (mergeModeActive) toggleMergeMode();
+}
+
+function toggleBookSelection(card) {
+  const id = card.dataset.id;
+  const idx = selectedForMerge.indexOf(id);
+  if (idx !== -1) {
+    selectedForMerge.splice(idx, 1);
+    card.classList.remove('selected');
+  } else {
+    if (selectedForMerge.length >= 2) {
+      setStatus('統合できるのは2冊までです。');
+      return;
+    }
+    selectedForMerge.push(id);
+    card.classList.add('selected');
+  }
+  updateMergeBarUI();
+}
+
+function updateMergeBarUI() {
+  document.getElementById('mergeBarStatus').textContent = selectedForMerge.length + '/2冊選択中';
+  document.getElementById('mergeGoBtn').disabled = selectedForMerge.length !== 2;
+}
+
+function collectStoreNames(book) {
+  const names = [];
+  if (book['Kindle_ASIN']) names.push('Kindle');
+  if (book['BW_ID']) names.push('BOOK☆WALKER');
+  if (book['BL_title_id'] && book['BL_vol_no']) names.push('BookLive');
+  return names;
+}
+
+// 「統合する」ボタン: まずクライアント側で店の重複を軽くチェックしてから確認モーダルを開く
+function startMergeConfirm() {
+  if (selectedForMerge.length !== 2) return;
+  const bookA = currentRows.find(function (r) { return String(r['id']) === selectedForMerge[0]; });
+  const bookB = currentRows.find(function (r) { return String(r['id']) === selectedForMerge[1]; });
+  if (!bookA || !bookB) { alert('選択した本が見つかりませんでした。「更新」してもう一度お試しください。'); return; }
+
+  const conflicts = [];
+  if (bookA['Kindle_ASIN'] && bookB['Kindle_ASIN']) conflicts.push('Kindle');
+  if (bookA['BW_ID'] && bookB['BW_ID']) conflicts.push('BOOK☆WALKER');
+  if (bookA['BL_title_id'] && bookA['BL_vol_no'] && bookB['BL_title_id'] && bookB['BL_vol_no']) conflicts.push('BookLive');
+  if (conflicts.length) {
+    alert('両方の本に同じ店(' + conflicts.join('、') + ')の情報が入っているため統合できません。');
+    return;
+  }
+
+  openMergeConfirmModal(bookA, bookB);
+}
+
+function mergeBookPreviewHtml(label, book, stores) {
+  const cover = book['Kindle_表紙URL'] || book['BW_表紙URL'] || book['BL_表紙URL'] || '';
+  return (
+    '<div class="merge-book-preview">' +
+      '<div class="merge-book-label">' + label + '</div>' +
+      (cover ? '<img src="' + cover + '" alt="">' : '<div class="merge-book-noimg"></div>') +
+      '<div class="merge-book-title">' + escapeHtml(book['タイトル'] || '(無題)') + '</div>' +
+      '<div class="merge-book-stores">' + (stores.length ? escapeHtml(stores.join(' / ')) : '(店情報なし)') + '</div>' +
+    '</div>'
+  );
+}
+
+function openMergeConfirmModal(bookA, bookB) {
+  mergePair = { aId: bookA['id'], bId: bookB['id'] };
+
+  let fieldsHtml = '';
+  MERGE_FIELD_DEFS.forEach(function (def) {
+    const valA = bookA[def.key] || '';
+    const valB = bookB[def.key] || '';
+    if (valA === valB) {
+      fieldsHtml +=
+        '<div class="merge-field">' +
+          '<div class="merge-field-label">' + def.label + '</div>' +
+          '<div class="merge-field-fixed">' + (valA ? escapeHtml(valA) : '(空欄)') + '</div>' +
+          '<input type="hidden" id="fixed_' + def.id + '" value="' + escapeHtml(valA) + '">' +
+        '</div>';
+      return;
+    }
+    fieldsHtml +=
+      '<div class="merge-field">' +
+        '<div class="merge-field-label">' + def.label + '(どちらを使いますか?)</div>' +
+        '<label class="merge-radio"><input type="radio" name="field_' + def.id + '" value="' + escapeHtml(valA) + '" checked> ' +
+          (valA ? escapeHtml(valA) : '(空欄)') + ' <span class="merge-source">[本A]</span></label>' +
+        '<label class="merge-radio"><input type="radio" name="field_' + def.id + '" value="' + escapeHtml(valB) + '"> ' +
+          (valB ? escapeHtml(valB) : '(空欄)') + ' <span class="merge-source">[本B]</span></label>' +
+      '</div>';
+  });
+
+  const storesA = collectStoreNames(bookA);
+  const storesB = collectStoreNames(bookB);
+
+  const html =
+    '<h2>この2冊を統合しますか?</h2>' +
+    '<div class="merge-books">' +
+      mergeBookPreviewHtml('本A', bookA, storesA) +
+      mergeBookPreviewHtml('本B', bookB, storesB) +
+    '</div>' +
+    '<div class="merge-fields">' + fieldsHtml + '</div>' +
+    '<div class="merge-note">統合すると本Bの行は削除され、本Aと本Bの情報を1冊分にまとめた1行だけが残ります。この操作は元に戻せません。</div>' +
+    '<div class="modal-actions">' +
+      '<button class="cancel" onclick="closeMergeModal()">キャンセル</button>' +
+      '<button class="submit" onclick="confirmMergeSubmit()">この内容で統合する</button>' +
+    '</div>';
+
+  document.getElementById('mergeModalBox').innerHTML = html;
+  document.getElementById('mergeModal').classList.remove('hidden');
+}
+
+function closeMergeModal() {
+  document.getElementById('mergeModal').classList.add('hidden');
+  mergePair = null;
+}
+
+async function confirmMergeSubmit() {
+  if (!mergePair) return;
+  const fields = {};
+  MERGE_FIELD_DEFS.forEach(function (def) {
+    const radios = document.getElementsByName('field_' + def.id);
+    if (radios.length) {
+      for (let i = 0; i < radios.length; i++) {
+        if (radios[i].checked) { fields[def.key] = radios[i].value; break; }
+      }
+    } else {
+      const fixed = document.getElementById('fixed_' + def.id);
+      if (fixed) fields[def.key] = fixed.value;
+    }
+  });
+
+  setStatus('統合しています...');
+  try {
+    const res = await fetch(GAS_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'mergeBooks', keepId: mergePair.aId, removeId: mergePair.bId, fields: fields })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '不明なエラー');
+
+    closeMergeModal();
+    cancelMergeMode();
+    setStatus('統合が完了しました。最新データを取得しています...');
+    await syncNow();
+  } catch (e) {
+    setStatus('統合に失敗しました: ' + e.message);
+    alert('統合に失敗しました。(' + e.message + ')');
+  }
 }
 
 let editTarget = null; // { type: 'book', id, oldPath } または { type: 'folder', oldPath }
