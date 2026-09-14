@@ -116,10 +116,11 @@
   /* 統合(マージ)モード */
   button.merge-toggle {
     background: #fff; color: var(--accent); border: 1px solid var(--accent);
-    padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-right: 8px;
+    padding: 7px 10px; border-radius: 8px; font-size: 12px; margin-right: 6px;
+    white-space: nowrap;
   }
   button.merge-toggle.active { background: var(--accent); color: #fff; }
-  .header-actions { display: flex; align-items: center; }
+  .header-actions { display: flex; align-items: center; flex-shrink: 0; }
 
   .merge-bar {
     background: #fff7e6; border-bottom: 1px solid var(--border);
@@ -150,6 +151,47 @@
   .merge-radio { display: block; font-size: 13px; margin-bottom: 4px; }
   .merge-source { color: var(--muted); font-size: 11px; }
   .merge-note { font-size: 12px; color: #b5651d; margin: 10px 0; }
+
+  /* 移動モード(複数選択して一括でフォルダ変更) */
+  .move-bar {
+    background: #eaf5ec; border-bottom: 1px solid var(--border);
+    padding: 8px 14px; display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px;
+  }
+  .move-bar.hidden { display: none; }
+  .move-bar-actions button {
+    margin-left: 8px; padding: 6px 12px; border-radius: 8px; border: none; font-size: 13px;
+  }
+  .move-bar-actions button:first-child { background: #eee; color: #333; }
+  .move-bar-actions button:last-child { background: var(--accent); color: #fff; }
+  .move-bar-actions button:disabled { opacity: 0.4; }
+
+  .move-book-list {
+    max-height: 120px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; margin-bottom: 12px; font-size: 13px; background: #fafafa;
+  }
+  .move-book-list ul { margin: 0; padding-left: 18px; }
+  .move-book-list li { margin-bottom: 2px; }
+
+  /* タップで展開/折りたたみできるツリー式フォルダピッカー */
+  .folder-tree-picker {
+    max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px; margin-bottom: 12px; background: #fafafa;
+  }
+  .tree-node { margin-left: 2px; }
+  .tree-row { display: flex; align-items: center; }
+  .tree-toggle {
+    width: 22px; flex-shrink: 0; font-size: 11px; color: var(--muted);
+    text-align: center; padding: 8px 0; cursor: pointer;
+  }
+  .tree-toggle-spacer { width: 22px; flex-shrink: 0; }
+  .tree-label {
+    font-size: 13px; padding: 7px 6px; border-radius: 6px; flex: 1; cursor: pointer;
+  }
+  .tree-label:active { background: #eef2f8; }
+  .tree-label.tree-selected { background: #dbe6f5; font-weight: 600; }
+  .tree-children { margin-left: 18px; border-left: 1px dashed var(--border); padding-left: 4px; }
+  .tree-children.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -160,7 +202,8 @@
     <div id="status">読み込み中...</div>
   </div>
   <div class="header-actions">
-    <button class="merge-toggle" id="mergeModeBtn" onclick="toggleMergeMode()">統合</button>
+    <button class="merge-toggle" id="mergeModeBtn" onclick="enterSelectionMode('merge')">統合</button>
+    <button class="merge-toggle" id="moveModeBtn" onclick="enterSelectionMode('move')">移動</button>
     <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
   </div>
 </header>
@@ -168,14 +211,24 @@
 <div class="merge-bar hidden" id="mergeBar">
   <span id="mergeBarStatus">0/2冊選択中</span>
   <div class="merge-bar-actions">
-    <button onclick="cancelMergeMode()">キャンセル</button>
+    <button onclick="exitSelectionMode()">キャンセル</button>
     <button id="mergeGoBtn" onclick="startMergeConfirm()" disabled>統合する</button>
   </div>
 </div>
 
-<div style="padding: 8px 10px 0;">
+<div class="move-bar hidden" id="moveBar">
+  <span id="moveBarStatus">0冊選択中</span>
+  <div class="move-bar-actions">
+    <button onclick="exitSelectionMode()">キャンセル</button>
+    <button id="moveGoBtn" onclick="startBulkMoveConfirm()" disabled>移動する</button>
+  </div>
+</div>
+
+<div style="padding: 8px 10px 0; display:flex; gap:8px;">
   <input type="search" id="searchBox" placeholder="タイトル・作者で検索" autocomplete="off"
-    style="width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid #e6e2da; border-radius:8px; font-size:14px;">
+    style="flex:1; min-width:0; box-sizing:border-box; padding:8px 10px; border:1px solid #e6e2da; border-radius:8px; font-size:14px;">
+  <button id="searchBtn" onclick="runSearch()"
+    style="flex-shrink:0; padding:8px 16px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-size:14px;">検索</button>
 </div>
 
 <main id="app"></main>
@@ -186,10 +239,8 @@
     <h2 id="editModalTitle">分類を変更</h2>
     <div class="modal-breadcrumb" id="editModalCurrent"></div>
 
-    <label for="editPathSelect">既存のフォルダから選ぶ</label>
-    <select id="editPathSelect">
-      <option value="">-- 選択してください --</option>
-    </select>
+    <label>既存のフォルダから選ぶ(タップで展開/選択)</label>
+    <div class="folder-tree-picker" id="editPathTree"></div>
 
     <label for="editPathInput">または直接入力(「/」区切り。例: 漫画/少年漫画/少年ジャンプ/るろうに剣心)</label>
     <input type="text" id="editPathInput" placeholder="漫画/少年漫画/少年ジャンプ/るろうに剣心">
@@ -204,6 +255,11 @@
 <!-- 統合(マージ)の最終確認モーダル。中身はJSで動的に生成する -->
 <div class="modal-overlay hidden" id="mergeModal">
   <div class="modal-box" id="mergeModalBox"></div>
+</div>
+
+<!-- 複数選択して一括でフォルダを移動する確認モーダル。中身はJSで動的に生成する -->
+<div class="modal-overlay hidden" id="moveModal">
+  <div class="modal-box" id="moveModalBox"></div>
 </div>
 
 <script>
@@ -275,7 +331,7 @@ function renderNode(name, node, isRoot, parentPath) {
   let html = '';
   const fullPath = parentPath ? parentPath + '/' + name : name;
   if (!isRoot) {
-    html += '<details class="folder"><summary data-path="' + escapeHtml(fullPath) + '">📁 ' + escapeHtml(name) + '</summary><div class="folder-children">';
+    html += '<details class="folder" data-path="' + escapeHtml(fullPath) + '"><summary data-path="' + escapeHtml(fullPath) + '">📁 ' + escapeHtml(name) + '</summary><div class="folder-children">';
   }
   Object.keys(node.children).sort().forEach(function (childName) {
     html += renderNode(childName, node.children[childName], false, fullPath);
@@ -286,10 +342,40 @@ function renderNode(name, node, isRoot, parentPath) {
 }
 
 let currentRows = []; // 検索フィルタのために現在表示中のデータを保持しておく
+let activeSearchQuery = ''; // 「検索」ボタンを押すまでは更新されない(リアルタイム検索はしない)
+let openFolderPaths = new Set(); // 開いているフォルダのフォルダパスを記録(更新・統合後も状態を保つため)
+let uncategorizedOpen = true; // 「未分類」フォルダの開閉状態
 
+// 更新・統合でデータが差し替わっても、スクロール位置とフォルダの開閉状態を保つ
 function render(rows) {
+  const scrollY = window.scrollY;
   currentRows = rows;
-  renderFiltered(document.getElementById('searchBox').value);
+  renderFiltered(activeSearchQuery);
+  applyFolderOpenStates();
+  window.scrollTo(0, scrollY);
+}
+
+// フォルダの開閉を切り替えた際に状態を記録しておく(toggleイベントはbubbleしないが、
+// キャプチャフェーズはbubbleしないイベントでも祖先要素まで伝わるためcapture:trueで拾う)
+document.getElementById('app').addEventListener('toggle', function (e) {
+  const details = e.target;
+  if (!details.classList || !details.classList.contains('folder')) return;
+  if (details.id === 'uncategorizedFolder') {
+    uncategorizedOpen = details.open;
+    return;
+  }
+  const path = details.dataset.path;
+  if (!path) return;
+  if (details.open) openFolderPaths.add(path); else openFolderPaths.delete(path);
+}, true);
+
+// 直前に記録した開閉状態を、新しく描画したDOMに反映する
+function applyFolderOpenStates() {
+  const uncategorizedEl = document.getElementById('uncategorizedFolder');
+  if (uncategorizedEl) uncategorizedEl.open = uncategorizedOpen;
+  document.querySelectorAll('#app details.folder[data-path]').forEach(function (el) {
+    if (openFolderPaths.has(el.dataset.path)) el.open = true;
+  });
 }
 
 function renderFiltered(query) {
@@ -326,7 +412,7 @@ function renderFiltered(query) {
     const uncategorized = tree.books;
     let html = '';
     if (uncategorized.length) {
-      html += '<details class="folder" open><summary>📂 未分類(' + uncategorized.length + ')</summary><div class="folder-children">';
+      html += '<details class="folder" id="uncategorizedFolder"><summary>📂 未分類(' + uncategorized.length + ')</summary><div class="folder-children">';
       uncategorized.forEach(function (b) { html += bookCardHtml(b); });
       html += '</div></details>';
     }
@@ -341,15 +427,18 @@ function renderFiltered(query) {
   }
 }
 
-function onSearchInput() {
-  renderFiltered(searchBoxEl.value);
+// 「検索」ボタンを押した時(またはEnterキー)だけ検索を実行する(入力の都度は検索しない)
+function runSearch() {
+  activeSearchQuery = searchBoxEl.value;
+  const scrollY = window.scrollY;
+  renderFiltered(activeSearchQuery);
+  applyFolderOpenStates();
+  window.scrollTo(0, scrollY);
 }
 
-// oninput属性ではなく addEventListener で複数イベントに登録することで、
-// 一部のブラウザ/WebViewで input イベントが安定して発火しない場合にも対応する
 const searchBoxEl = document.getElementById('searchBox');
-['input', 'keyup', 'change', 'compositionend'].forEach(function (evtName) {
-  searchBoxEl.addEventListener(evtName, onSearchInput);
+searchBoxEl.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
 });
 
 // ------------------------------------------------------------------
@@ -362,7 +451,7 @@ function attachLongPressHandlers() {
   const app = document.getElementById('app');
 
   const start = function (e) {
-    if (mergeModeActive) return; // 統合モード中は長押しでの分類修正モーダルを開かない
+    if (activeSelectionMode) return; // 統合/移動モード中は長押しでの分類修正モーダルを開かない
     pressTriggered = false;
     const card = e.target.closest('.book-card');
     const summary = e.target.closest('details.folder > summary');
@@ -404,9 +493,9 @@ function attachLongPressHandlers() {
     }
   }, true);
 
-  // 統合モード中は、本カードをタップすると(リンクを踏まずに)選択/解除する
+  // 統合/移動モード中は、本カードをタップすると(リンクを踏まずに)選択/解除する
   app.addEventListener('click', function (e) {
-    if (!mergeModeActive) return;
+    if (!activeSelectionMode) return;
     const card = e.target.closest('.book-card');
     if (!card) return;
     e.preventDefault();
@@ -416,11 +505,14 @@ function attachLongPressHandlers() {
 }
 
 // ------------------------------------------------------------------
-// 重複した本の統合(マージ)モード
+// 複数選択モード(「統合」= 重複した本を2冊選んで1冊にまとめる /
+//              「移動」= 好きな冊数を選んでフォルダパスを一括変更する)
+// 2つのモードは同じ選択状態を共有し、同時には片方しか有効にならない
 // ------------------------------------------------------------------
-let mergeModeActive = false;
-let selectedForMerge = []; // 選択中の本のid(最大2件)
-let mergePair = null; // 確認モーダル表示中に保持する { aId, bId }
+let activeSelectionMode = null; // 'merge' | 'move' | null
+let selectedIds = []; // 選択中の本のid
+let mergePair = null; // 統合の確認モーダル表示中に保持する { aId, bId }
+let moveTargetBookIds = []; // 移動の確認モーダル表示中に保持する対象id一覧
 
 const MERGE_FIELD_DEFS = [
   { key: 'タイトル', id: 'title', label: 'タイトル' },
@@ -431,40 +523,56 @@ const MERGE_FIELD_DEFS = [
   { key: 'レーベル', id: 'label', label: 'レーベル' }
 ];
 
-function toggleMergeMode() {
-  mergeModeActive = !mergeModeActive;
-  selectedForMerge = [];
-  document.getElementById('mergeBar').classList.toggle('hidden', !mergeModeActive);
-  document.getElementById('mergeModeBtn').classList.toggle('active', mergeModeActive);
-  document.getElementById('mergeModeBtn').textContent = mergeModeActive ? '統合モード中' : '統合';
+// 既に同じモードが有効なら解除、違うモード(または未選択)なら切り替える
+function enterSelectionMode(mode) {
+  if (activeSelectionMode === mode) {
+    exitSelectionMode();
+    return;
+  }
+  activeSelectionMode = mode;
+  selectedIds = [];
   document.querySelectorAll('.book-card.selected').forEach(function (el) { el.classList.remove('selected'); });
-  updateMergeBarUI();
+  updateSelectionModeUI();
 }
 
-function cancelMergeMode() {
-  if (mergeModeActive) toggleMergeMode();
+function exitSelectionMode() {
+  activeSelectionMode = null;
+  selectedIds = [];
+  document.querySelectorAll('.book-card.selected').forEach(function (el) { el.classList.remove('selected'); });
+  updateSelectionModeUI();
+}
+
+function updateSelectionModeUI() {
+  document.getElementById('mergeModeBtn').classList.toggle('active', activeSelectionMode === 'merge');
+  document.getElementById('mergeModeBtn').textContent = activeSelectionMode === 'merge' ? '統合モード中' : '統合';
+  document.getElementById('moveModeBtn').classList.toggle('active', activeSelectionMode === 'move');
+  document.getElementById('moveModeBtn').textContent = activeSelectionMode === 'move' ? '移動モード中' : '移動';
+
+  document.getElementById('mergeBar').classList.toggle('hidden', activeSelectionMode !== 'merge');
+  document.getElementById('moveBar').classList.toggle('hidden', activeSelectionMode !== 'move');
+
+  document.getElementById('mergeBarStatus').textContent = selectedIds.length + '/2冊選択中';
+  document.getElementById('mergeGoBtn').disabled = selectedIds.length !== 2;
+
+  document.getElementById('moveBarStatus').textContent = selectedIds.length + '冊選択中';
+  document.getElementById('moveGoBtn').disabled = selectedIds.length === 0;
 }
 
 function toggleBookSelection(card) {
   const id = card.dataset.id;
-  const idx = selectedForMerge.indexOf(id);
+  const idx = selectedIds.indexOf(id);
   if (idx !== -1) {
-    selectedForMerge.splice(idx, 1);
+    selectedIds.splice(idx, 1);
     card.classList.remove('selected');
   } else {
-    if (selectedForMerge.length >= 2) {
+    if (activeSelectionMode === 'merge' && selectedIds.length >= 2) {
       setStatus('統合できるのは2冊までです。');
       return;
     }
-    selectedForMerge.push(id);
+    selectedIds.push(id);
     card.classList.add('selected');
   }
-  updateMergeBarUI();
-}
-
-function updateMergeBarUI() {
-  document.getElementById('mergeBarStatus').textContent = selectedForMerge.length + '/2冊選択中';
-  document.getElementById('mergeGoBtn').disabled = selectedForMerge.length !== 2;
+  updateSelectionModeUI();
 }
 
 function collectStoreNames(book) {
@@ -477,9 +585,9 @@ function collectStoreNames(book) {
 
 // 「統合する」ボタン: まずクライアント側で店の重複を軽くチェックしてから確認モーダルを開く
 function startMergeConfirm() {
-  if (selectedForMerge.length !== 2) return;
-  const bookA = currentRows.find(function (r) { return String(r['id']) === selectedForMerge[0]; });
-  const bookB = currentRows.find(function (r) { return String(r['id']) === selectedForMerge[1]; });
+  if (activeSelectionMode !== 'merge' || selectedIds.length !== 2) return;
+  const bookA = currentRows.find(function (r) { return String(r['id']) === selectedIds[0]; });
+  const bookB = currentRows.find(function (r) { return String(r['id']) === selectedIds[1]; });
   if (!bookA || !bookB) { alert('選択した本が見つかりませんでした。「更新」してもう一度お試しください。'); return; }
 
   const conflicts = [];
@@ -492,6 +600,17 @@ function startMergeConfirm() {
   }
 
   openMergeConfirmModal(bookA, bookB);
+}
+
+// 「移動する」ボタン: 選択した本一覧から確認モーダルを開く
+function startBulkMoveConfirm() {
+  if (activeSelectionMode !== 'move' || selectedIds.length === 0) return;
+  const books = selectedIds
+    .map(function (id) { return currentRows.find(function (r) { return String(r['id']) === id; }); })
+    .filter(Boolean);
+  if (!books.length) { alert('選択した本が見つかりませんでした。「更新」してもう一度お試しください。'); return; }
+
+  openMoveConfirmModal(books);
 }
 
 function mergeBookPreviewHtml(label, book, stores) {
@@ -583,7 +702,7 @@ async function confirmMergeSubmit() {
     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
     closeMergeModal();
-    cancelMergeMode();
+    exitSelectionMode();
     setStatus('統合が完了しました。最新データを取得しています...');
     await syncNow();
   } catch (e) {
@@ -602,15 +721,66 @@ function collectDistinctPaths() {
   return Array.from(set).sort();
 }
 
-function populatePathSelect(selectedPath) {
-  const sel = document.getElementById('editPathSelect');
-  sel.innerHTML = '<option value="">-- 選択してください --</option>';
+// ------------------------------------------------------------------
+// タップで展開/折りたたみできるツリー式フォルダピッカー
+// (単一編集モーダル・一括移動モーダルの両方から呼ばれる共通部品)
+// ------------------------------------------------------------------
+function buildFolderPathTree() {
+  const root = { children: {} };
   collectDistinctPaths().forEach(function (p) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p.replace(/\//g, ' ＞ ');
-    if (p === selectedPath) opt.selected = true;
-    sel.appendChild(opt);
+    const segments = p.split('/').filter(Boolean);
+    let node = root;
+    segments.forEach(function (seg) {
+      if (!node.children[seg]) node.children[seg] = { children: {} };
+      node = node.children[seg];
+    });
+  });
+  return root;
+}
+
+function buildFolderTreeNode(name, node, parentPath) {
+  const fullPath = parentPath ? parentPath + '/' + name : name;
+  const hasChildren = Object.keys(node.children).length > 0;
+  let childrenHtml = '';
+  Object.keys(node.children).sort().forEach(function (childName) {
+    childrenHtml += buildFolderTreeNode(childName, node.children[childName], fullPath);
+  });
+  return (
+    '<div class="tree-node">' +
+      '<div class="tree-row">' +
+        (hasChildren ? '<span class="tree-toggle">▶</span>' : '<span class="tree-toggle-spacer"></span>') +
+        '<span class="tree-label" data-select-path="' + escapeHtml(fullPath) + '">📁 ' + escapeHtml(name) + '</span>' +
+      '</div>' +
+      '<div class="tree-children hidden">' + childrenHtml + '</div>' +
+    '</div>'
+  );
+}
+
+// containerId内にフォルダツリーを描画し、葉/枝どちらを選んでもonSelect(path)が呼ばれるようにする
+function renderFolderTreePicker(containerId, onSelect) {
+  const root = buildFolderPathTree();
+  let html = '';
+  Object.keys(root.children).sort().forEach(function (name) {
+    html += buildFolderTreeNode(name, root.children[name], '');
+  });
+  const container = document.getElementById(containerId);
+  container.innerHTML = html || '<div style="font-size:13px;color:var(--muted);padding:6px;">既存のフォルダがまだありません。下の欄に直接入力してください。</div>';
+
+  container.addEventListener('click', function (e) {
+    const toggle = e.target.closest('.tree-toggle');
+    if (toggle) {
+      const childrenEl = toggle.closest('.tree-node').querySelector(':scope > .tree-children');
+      const wasHidden = childrenEl.classList.contains('hidden');
+      childrenEl.classList.toggle('hidden');
+      toggle.textContent = wasHidden ? '▼' : '▶';
+      return;
+    }
+    const label = e.target.closest('.tree-label');
+    if (label) {
+      container.querySelectorAll('.tree-label.tree-selected').forEach(function (el) { el.classList.remove('tree-selected'); });
+      label.classList.add('tree-selected');
+      onSelect(label.dataset.selectPath);
+    }
   });
 }
 
@@ -619,8 +789,10 @@ function openBookEditor(id, currentPath) {
   document.getElementById('editModalTitle').textContent = '本の分類を変更';
   document.getElementById('editModalCurrent').textContent =
     '現在: ' + (currentPath ? currentPath.replace(/\//g, ' ＞ ') : '(未分類)');
-  populatePathSelect(currentPath);
   document.getElementById('editPathInput').value = currentPath || '';
+  renderFolderTreePicker('editPathTree', function (path) {
+    document.getElementById('editPathInput').value = path;
+  });
   document.getElementById('editModal').classList.remove('hidden');
 }
 
@@ -629,8 +801,10 @@ function openFolderEditor(path) {
   editTarget = { type: 'folder', oldPath: path };
   document.getElementById('editModalTitle').textContent = 'フォルダごと分類を変更(配下の本すべてが対象)';
   document.getElementById('editModalCurrent').textContent = '現在: ' + path.replace(/\//g, ' ＞ ');
-  populatePathSelect(path);
   document.getElementById('editPathInput').value = path;
+  renderFolderTreePicker('editPathTree', function (selectedPath) {
+    document.getElementById('editPathInput').value = selectedPath;
+  });
   document.getElementById('editModal').classList.remove('hidden');
 }
 
@@ -638,10 +812,6 @@ function closeEditModal() {
   document.getElementById('editModal').classList.add('hidden');
   editTarget = null;
 }
-
-document.getElementById('editPathSelect').addEventListener('change', function () {
-  if (this.value) document.getElementById('editPathInput').value = this.value;
-});
 
 async function submitEdit() {
   if (!editTarget) return;
@@ -681,6 +851,65 @@ async function submitEdit() {
   } catch (e) {
     setStatus('変更の送信に失敗しました: ' + e.message);
     alert('送信に失敗しました。Wi-Fi環境を確認して、もう一度お試しください。(' + e.message + ')');
+  }
+}
+
+// ------------------------------------------------------------------
+// 複数選択して一括でフォルダを移動する確認モーダル
+// ------------------------------------------------------------------
+function openMoveConfirmModal(books) {
+  moveTargetBookIds = books.map(function (b) { return b['id']; });
+
+  const listHtml = books.map(function (b) {
+    return '<li>' + escapeHtml(b['タイトル'] || '(無題)') + '</li>';
+  }).join('');
+
+  const html =
+    '<h2>' + books.length + '冊のフォルダを移動</h2>' +
+    '<div class="move-book-list"><ul>' + listHtml + '</ul></div>' +
+    '<label>既存のフォルダから選ぶ(タップで展開/選択)</label>' +
+    '<div class="folder-tree-picker" id="moveTargetTree"></div>' +
+    '<label for="moveTargetInput">または直接入力(「/」区切り)</label>' +
+    '<input type="text" id="moveTargetInput" placeholder="漫画/少年漫画/少年ジャンプ/新しいシリーズ名">' +
+    '<div class="modal-actions">' +
+      '<button class="cancel" onclick="closeMoveModal()">キャンセル</button>' +
+      '<button class="submit" onclick="confirmBulkMoveSubmit()">この内容で移動する</button>' +
+    '</div>';
+
+  document.getElementById('moveModalBox').innerHTML = html;
+  renderFolderTreePicker('moveTargetTree', function (path) {
+    document.getElementById('moveTargetInput').value = path;
+  });
+  document.getElementById('moveModal').classList.remove('hidden');
+}
+
+function closeMoveModal() {
+  document.getElementById('moveModal').classList.add('hidden');
+  moveTargetBookIds = [];
+}
+
+async function confirmBulkMoveSubmit() {
+  const newPath = document.getElementById('moveTargetInput').value.trim().replace(/^\/+|\/+$/g, '');
+  if (!newPath) { alert('移動先のフォルダパスを入力または選択してください。'); return; }
+  if (!moveTargetBookIds.length) return;
+
+  setStatus('スプレッドシートに反映しています...');
+  try {
+    const res = await fetch(GAS_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'moveBooksBulk', ids: moveTargetBookIds, newPath: newPath })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '不明なエラー');
+
+    closeMoveModal();
+    exitSelectionMode();
+    setStatus('移動が完了しました。最新データを取得しています...');
+    await syncNow();
+  } catch (e) {
+    setStatus('移動に失敗しました: ' + e.message);
+    alert('移動に失敗しました。(' + e.message + ')');
   }
 }
 
