@@ -179,7 +179,8 @@
     padding: 6px; margin-bottom: 12px; background: #fafafa;
   }
   .tree-node { margin-left: 2px; }
-  .tree-row { display: flex; align-items: center; }
+  .tree-row { display: flex; align-items: center; cursor: pointer; border-radius: 6px; }
+  .tree-row:active { background: #eef2f8; }
   .tree-toggle {
     width: 22px; flex-shrink: 0; font-size: 11px; color: var(--muted);
     text-align: center; padding: 8px 0; cursor: pointer;
@@ -766,22 +767,31 @@ function renderFolderTreePicker(containerId, onSelect) {
   const container = document.getElementById(containerId);
   container.innerHTML = html || '<div style="font-size:13px;color:var(--muted);padding:6px;">既存のフォルダがまだありません。下の欄に直接入力してください。</div>';
 
-  container.addEventListener('click', function (e) {
-    const toggle = e.target.closest('.tree-toggle');
-    if (toggle) {
-      const childrenEl = toggle.closest('.tree-node').querySelector(':scope > .tree-children');
+  // addEventListenerで毎回追加すると、モーダルを開くたびにハンドラが積み重なり
+  // (このコンテナ自体は使い回されるため)開閉が効かなくなることがあるので、
+  // onclickへの代入で常に1つだけに保つ
+  container.onclick = function (e) {
+    const row = e.target.closest('.tree-row');
+    if (!row) return;
+    const node = row.closest('.tree-node');
+    const childrenEl = node.querySelector(':scope > .tree-children');
+    const toggle = row.querySelector('.tree-toggle');
+    const label = row.querySelector('.tree-label');
+
+    // ▶だけでなく行のどこをタップしても、子フォルダがあれば展開/折りたたみする
+    if (childrenEl && childrenEl.children.length > 0) {
       const wasHidden = childrenEl.classList.contains('hidden');
       childrenEl.classList.toggle('hidden');
-      toggle.textContent = wasHidden ? '▼' : '▶';
-      return;
+      if (toggle) toggle.textContent = wasHidden ? '▼' : '▶';
     }
-    const label = e.target.closest('.tree-label');
+
+    // 同時に、このフォルダを移動先として選択状態にする
     if (label) {
       container.querySelectorAll('.tree-label.tree-selected').forEach(function (el) { el.classList.remove('tree-selected'); });
       label.classList.add('tree-selected');
       onSelect(label.dataset.selectPath);
     }
-  });
+  };
 }
 
 function openBookEditor(id, currentPath) {
