@@ -327,6 +327,25 @@ function escapeHtml(s) {
   });
 }
 
+// GAS_WEBAPP_URLへの通信をまとめる共通関数。
+// GAS側がエラーになるとJSONではなくHTMLのエラーページ/ログイン画面が返ってくることがあるため、
+// その場合は原因が分かりやすいメッセージに変換してから投げる
+async function fetchGasJson(options) {
+  const res = await fetch(GAS_WEBAPP_URL, options);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if (text.trim().indexOf('<') === 0) {
+      throw new Error(
+        'サーバーからHTMLが返ってきました(JSONではありません)。GASを再デプロイ済みか、' +
+        'デプロイの公開設定(アクセスできるユーザー)をご確認ください。'
+      );
+    }
+    throw new Error('サーバーの応答を解析できませんでした: ' + text.slice(0, 200));
+  }
+}
+
 // parentPathを引き継いでこのフォルダのフルパス(スプレッドシートの「フォルダパス」列と同じ形式)を組み立てる
 function renderNode(name, node, isRoot, parentPath) {
   let html = '';
@@ -694,12 +713,11 @@ async function confirmMergeSubmit() {
 
   setStatus('統合しています...');
   try {
-    const res = await fetch(GAS_WEBAPP_URL, {
+    const data = await fetchGasJson({
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: 'mergeBooks', keepId: mergePair.aId, removeId: mergePair.bId, fields: fields })
     });
-    const data = await res.json();
     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
     closeMergeModal();
@@ -834,12 +852,11 @@ async function submitEdit() {
 
   setStatus('スプレッドシートに反映しています...');
   try {
-    const res = await fetch(GAS_WEBAPP_URL, {
+    const data = await fetchGasJson({
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // preflightを避けるためtext/plainで送る(doPost側でJSONとしてparseする)
       body: JSON.stringify(payload)
     });
-    const data = await res.json();
     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
     // スプレッドシート側と同じ内容でローカルのキャッシュも更新し、画面に即反映する
@@ -905,12 +922,11 @@ async function confirmBulkMoveSubmit() {
 
   setStatus('スプレッドシートに反映しています...');
   try {
-    const res = await fetch(GAS_WEBAPP_URL, {
+    const data = await fetchGasJson({
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: 'moveBooksBulk', ids: moveTargetBookIds, newPath: newPath })
     });
-    const data = await res.json();
     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
     closeMoveModal();
@@ -928,8 +944,11 @@ async function syncNow() {
   btn.disabled = true;
   setStatus('通信中... データを取得しています');
   try {
-    const res = await fetch(GAS_WEBAPP_URL, { cache: 'no-store' });
-    const data = await res.json();
+    const data = await fetchGasJson({ cache: 'no-store' });
+    // doGetがエラー時に返す { ok:false, error:... } 形式を検知する(正常時は配列が返る)
+    if (!Array.isArray(data)) {
+      throw new Error((data && data.error) || '予期しない形式のデータが返ってきました。');
+    }
     saveLocal(data);
 
     // 表紙画像をservice worker経由でキャッシュ(表示することでcache-first fetchが走る)
