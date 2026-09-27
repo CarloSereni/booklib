@@ -179,20 +179,31 @@
     padding: 6px; margin-bottom: 12px; background: #fafafa;
   }
   .tree-node { margin-left: 2px; }
-  .tree-row { display: flex; align-items: center; cursor: pointer; border-radius: 6px; }
+  /* 行全体(アイコン・矢印・ラベル以外の余白も含む)が「展開/折りたたみ」のタップ領域。
+     ラベル文字の上だけが「選択」のタップ領域になる(選択と展開のタップを完全に分離するため)。
+     矢印そのものを正確に狙う必要が無いよう、行の高さも広めに取っている。 */
+  .tree-row { display: flex; align-items: center; cursor: pointer; border-radius: 6px; min-height: 42px; }
   .tree-row:active { background: #eef2f8; }
   .tree-toggle {
-    width: 22px; flex-shrink: 0; font-size: 11px; color: var(--muted);
-    text-align: center; padding: 8px 0; cursor: pointer;
+    width: 30px; flex-shrink: 0; font-size: 12px; color: var(--muted);
+    text-align: center; padding: 12px 0; cursor: pointer;
   }
-  .tree-toggle-spacer { width: 22px; flex-shrink: 0; }
+  .tree-toggle-spacer { width: 30px; flex-shrink: 0; }
   .tree-label {
-    font-size: 13px; padding: 7px 6px; border-radius: 6px; flex: 1; cursor: pointer;
+    font-size: 13px; padding: 9px 8px; border-radius: 6px; cursor: pointer;
+    display: inline-block; /* flex:1にしない → ラベルは文字幅だけを占有し、それ以外は展開用の余白になる */
   }
   .tree-label:active { background: #eef2f8; }
   .tree-label.tree-selected { background: #dbe6f5; font-weight: 600; }
   .tree-children { margin-left: 18px; border-left: 1px dashed var(--border); padding-left: 4px; }
   .tree-children.hidden { display: none; }
+
+  /* 一括「フォルダ操作」モーダルの置き換え/追加/削除モード切替 */
+  .move-mode-select {
+    display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;
+    font-size: 13px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: #fafafa;
+  }
+  .move-mode-select label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -204,7 +215,7 @@
   </div>
   <div class="header-actions">
     <button class="merge-toggle" id="mergeModeBtn" onclick="enterSelectionMode('merge')">統合</button>
-    <button class="merge-toggle" id="moveModeBtn" onclick="enterSelectionMode('move')">移動</button>
+    <button class="merge-toggle" id="moveModeBtn" onclick="enterSelectionMode('move')">フォルダ操作</button>
     <button class="sync" id="restoreBtn" onclick="restoreFromLocalBackup()" style="background:#b5651d; margin-right:6px;">復元</button>
     <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
   </div>
@@ -222,7 +233,7 @@
   <span id="moveBarStatus">0冊選択中</span>
   <div class="move-bar-actions">
     <button onclick="exitSelectionMode()">キャンセル</button>
-    <button id="moveGoBtn" onclick="startBulkMoveConfirm()" disabled>移動する</button>
+    <button id="moveGoBtn" onclick="startBulkMoveConfirm()" disabled>フォルダ操作する</button>
   </div>
 </div>
 
@@ -579,7 +590,7 @@ function updateSelectionModeUI() {
   document.getElementById('mergeModeBtn').classList.toggle('active', activeSelectionMode === 'merge');
   document.getElementById('mergeModeBtn').textContent = activeSelectionMode === 'merge' ? '統合モード中' : '統合';
   document.getElementById('moveModeBtn').classList.toggle('active', activeSelectionMode === 'move');
-  document.getElementById('moveModeBtn').textContent = activeSelectionMode === 'move' ? '移動モード中' : '移動';
+  document.getElementById('moveModeBtn').textContent = activeSelectionMode === 'move' ? 'フォルダ操作モード中' : 'フォルダ操作';
 
   document.getElementById('mergeBar').classList.toggle('hidden', activeSelectionMode !== 'merge');
   document.getElementById('moveBar').classList.toggle('hidden', activeSelectionMode !== 'move');
@@ -814,14 +825,13 @@ function renderFolderTreePicker(containerId, onSelect, multiSelect) {
     const toggle = row.querySelector('.tree-toggle');
     const label = row.querySelector('.tree-label');
 
-    // ▶だけでなく行のどこをタップしても、子フォルダがあれば展開/折りたたみする
-    if (childrenEl && childrenEl.children.length > 0) {
-      const wasHidden = childrenEl.classList.contains('hidden');
-      childrenEl.classList.toggle('hidden');
-      if (toggle) toggle.textContent = wasHidden ? '▼' : '▶';
-    }
+    // 「ラベルの文字そのもの」をタップした場合だけ選択、それ以外(矢印・フォルダアイコンの余白・
+    // 行の空白部分)をタップした場合は展開/折りたたみだけを行う。
+    // 深い階層を辿る際に、意図せず途中のフォルダまで選択されてしまうのを防ぐための分離。
+    // (矢印そのものを正確に狙う必要が無いよう、ラベル以外の広い範囲をすべて展開の対象にしている)
+    const clickedLabel = !!(label && e.target.closest('.tree-label') === label);
 
-    if (label) {
+    if (clickedLabel) {
       if (!multiSelect) {
         // 単一選択モード:このフォルダだけを選択状態にする(フォルダの移動・一括移動用)
         container.querySelectorAll('.tree-label.tree-selected').forEach(function (el) { el.classList.remove('tree-selected'); });
@@ -829,6 +839,13 @@ function renderFolderTreePicker(containerId, onSelect, multiSelect) {
       }
       // 複数選択モードでは、ハイライトの更新は呼び出し側に任せる
       onSelect(label.dataset.selectPath);
+      return;
+    }
+
+    if (childrenEl && childrenEl.children.length > 0) {
+      const wasHidden = childrenEl.classList.contains('hidden');
+      childrenEl.classList.toggle('hidden');
+      if (toggle) toggle.textContent = wasHidden ? '▼' : '▶';
     }
   };
 }
@@ -932,6 +949,9 @@ async function submitEdit() {
 // ------------------------------------------------------------------
 // 複数選択して一括でフォルダを移動する確認モーダル
 // ------------------------------------------------------------------
+// 「置き換え」= 選択した本のフォルダパスを指定パスで上書き(従来通り)
+// 「追加」   = 選択した本それぞれの既存のフォルダパスは残したまま、指定パスを追加(";"区切りに追記)
+// 「削除」   = 選択した本それぞれの既存のフォルダパスのうち、指定パスと完全一致するものだけを外す
 function openMoveConfirmModal(books) {
   moveTargetBookIds = books.map(function (b) { return b['id']; });
 
@@ -940,22 +960,57 @@ function openMoveConfirmModal(books) {
   }).join('');
 
   const html =
-    '<h2>' + books.length + '冊のフォルダを移動</h2>' +
+    '<h2>' + books.length + '冊のフォルダを一括操作</h2>' +
     '<div class="move-book-list"><ul>' + listHtml + '</ul></div>' +
-    '<label>既存のフォルダから選ぶ(タップで展開/選択)</label>' +
+    '<div class="move-mode-select">' +
+      '<label><input type="radio" name="moveMode" value="replace" checked> 置き換え(今のフォルダをこのパスに置き換える)</label>' +
+      '<label><input type="radio" name="moveMode" value="add"> 追加(今のフォルダは残したまま、このパスも追加する)</label>' +
+      '<label><input type="radio" name="moveMode" value="remove"> 削除(今のフォルダから、このパスだけを外す)</label>' +
+    '</div>' +
+    '<label id="moveTargetTreeLabel">既存のフォルダから選ぶ(タップで展開/選択)</label>' +
     '<div class="folder-tree-picker" id="moveTargetTree"></div>' +
-    '<label for="moveTargetInput">または直接入力(「/」区切り)</label>' +
+    '<label for="moveTargetInput" id="moveTargetInputLabel">または直接入力(「/」区切り)</label>' +
     '<input type="text" id="moveTargetInput" placeholder="漫画/少年漫画/少年ジャンプ/新しいシリーズ名">' +
     '<div class="modal-actions">' +
       '<button class="cancel" onclick="closeMoveModal()">キャンセル</button>' +
-      '<button class="submit" onclick="confirmBulkMoveSubmit()">この内容で移動する</button>' +
+      '<button class="submit" onclick="confirmBulkMoveSubmit()">この内容で実行する</button>' +
     '</div>';
 
   document.getElementById('moveModalBox').innerHTML = html;
   renderFolderTreePicker('moveTargetTree', function (path) {
     document.getElementById('moveTargetInput').value = path;
   });
+  document.querySelectorAll('#moveModalBox input[name="moveMode"]').forEach(function (radio) {
+    radio.addEventListener('change', updateMoveModalModeUI);
+  });
+  updateMoveModalModeUI();
   document.getElementById('moveModal').classList.remove('hidden');
+}
+
+function getSelectedMoveMode() {
+  const el = document.querySelector('#moveModalBox input[name="moveMode"]:checked');
+  return el ? el.value : 'replace';
+}
+
+// モードに応じて入力欄のラベル・プレースホルダーだけ分かりやすく差し替える(挙動自体は変えない)
+function updateMoveModalModeUI() {
+  const mode = getSelectedMoveMode();
+  const input = document.getElementById('moveTargetInput');
+  const inputLabel = document.getElementById('moveTargetInputLabel');
+  const treeLabel = document.getElementById('moveTargetTreeLabel');
+  if (mode === 'add') {
+    treeLabel.textContent = '追加するフォルダを選ぶ(タップで展開/選択)';
+    inputLabel.textContent = 'または直接入力(追加するパスを「/」区切りで指定)';
+    input.placeholder = '例: 漫画/作者名/手塚治虫';
+  } else if (mode === 'remove') {
+    treeLabel.textContent = '外すフォルダを選ぶ(タップで展開/選択)';
+    inputLabel.textContent = 'または直接入力(外すパスを「/」区切りで指定・既存と完全一致するもののみ対象)';
+    input.placeholder = '例: 漫画/少年漫画/少年ジャンプ/るろうに剣心';
+  } else {
+    treeLabel.textContent = '既存のフォルダから選ぶ(タップで展開/選択)';
+    inputLabel.textContent = 'または直接入力(「/」区切り)';
+    input.placeholder = '漫画/少年漫画/少年ジャンプ/新しいシリーズ名';
+  }
 }
 
 function closeMoveModal() {
@@ -964,26 +1019,40 @@ function closeMoveModal() {
 }
 
 async function confirmBulkMoveSubmit() {
-  const newPath = document.getElementById('moveTargetInput').value.trim().replace(/^\/+|\/+$/g, '');
-  if (!newPath) { alert('移動先のフォルダパスを入力または選択してください。'); return; }
+  const mode = getSelectedMoveMode();
+  const path = document.getElementById('moveTargetInput').value.trim().replace(/^\/+|\/+$/g, '');
+  if (!path) { alert('フォルダパスを入力または選択してください。'); return; }
   if (!moveTargetBookIds.length) return;
+
+  const actionByMode = { replace: 'moveBooksBulk', add: 'addFolderPathBulk', remove: 'removeFolderPathBulk' };
+  const confirmMessageByMode = {
+    replace: moveTargetBookIds.length + '冊のフォルダを「' + path + '」に置き換えます。よろしいですか?',
+    add: moveTargetBookIds.length + '冊に、フォルダ「' + path + '」を追加します(既存のフォルダはそのまま残ります)。よろしいですか?',
+    remove: moveTargetBookIds.length + '冊から、フォルダ「' + path + '」を外します(該当しない本は変更されません)。よろしいですか?'
+  };
+  if (!confirm(confirmMessageByMode[mode])) return;
+
+  const payload = { action: actionByMode[mode], ids: moveTargetBookIds };
+  if (mode === 'replace') payload.newPath = path;
+  else if (mode === 'add') payload.addPath = path;
+  else payload.removePath = path;
 
   setStatus('スプレッドシートに反映しています...');
   try {
     const data = await fetchGasJson({
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'moveBooksBulk', ids: moveTargetBookIds, newPath: newPath })
+      body: JSON.stringify(payload)
     });
     if (!data.ok) throw new Error(data.error || '不明なエラー');
 
     closeMoveModal();
     exitSelectionMode();
-    setStatus('移動が完了しました。最新データを取得しています...');
+    setStatus('反映が完了しました。最新データを取得しています...');
     await syncNow();
   } catch (e) {
-    setStatus('移動に失敗しました: ' + e.message);
-    alert('移動に失敗しました。(' + e.message + ')');
+    setStatus('反映に失敗しました: ' + e.message);
+    alert('反映に失敗しました。(' + e.message + ')');
   }
 }
 
