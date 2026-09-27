@@ -240,11 +240,14 @@
     <h2 id="editModalTitle">分類を変更</h2>
     <div class="modal-breadcrumb" id="editModalCurrent"></div>
 
-    <label>既存のフォルダから選ぶ(タップで展開/選択)</label>
+    <label id="editPathTreeLabel">既存のフォルダから選ぶ(タップで選択/もう一度タップで解除。複数選べます)</label>
     <div class="folder-tree-picker" id="editPathTree"></div>
 
-    <label for="editPathInput">または直接入力(「/」区切り。例: 漫画/少年漫画/少年ジャンプ/るろうに剣心)</label>
-    <input type="text" id="editPathInput" placeholder="漫画/少年漫画/少年ジャンプ/るろうに剣心">
+    <label for="editPathInput">または直接入力(「/」区切り。複数カテゴリーは「;」区切り)</label>
+    <div style="display:flex; gap:6px; align-items:center;">
+      <input type="text" id="editPathInput" placeholder="漫画/少年漫画/少年ジャンプ/るろうに剣心" style="flex:1;">
+      <button type="button" onclick="clearEditPathInput()" style="flex-shrink:0; padding:8px 10px; border-radius:8px; border:1px solid #e6e2da; background:#f5f3ee;">クリア</button>
+    </div>
 
     <div class="modal-actions">
       <button class="cancel" onclick="closeEditModal()">キャンセル</button>
@@ -287,16 +290,25 @@ function setStatus(text) {
 }
 
 // フォルダパス("漫画/少年漫画/...")からツリー構造を組み立てる
+// 1冊の本が複数カテゴリーに属せるよう、フォルダパスは";"区切りで複数指定できる
+// (例:「漫画/少年漫画/少年ジャンプ/るろうに剣心;漫画/歴史漫画/るろうに剣心」)
 function buildTree(rows) {
   const root = { children: {}, books: [] };
   rows.forEach(function (row) {
-    const path = String(row['フォルダパス'] || '').split('/').filter(Boolean);
-    let node = root;
-    path.forEach(function (segment) {
-      if (!node.children[segment]) node.children[segment] = { children: {}, books: [] };
-      node = node.children[segment];
+    const rawPaths = String(row['フォルダパス'] || '').split(';').map(function (s) { return s.trim(); }).filter(Boolean);
+    if (rawPaths.length === 0) {
+      root.books.push(row); // フォルダパス未設定は従来通り「未分類」扱い
+      return;
+    }
+    rawPaths.forEach(function (rawPath) {
+      const path = rawPath.split('/').filter(Boolean);
+      let node = root;
+      path.forEach(function (segment) {
+        if (!node.children[segment]) node.children[segment] = { children: {}, books: [] };
+        node = node.children[segment];
+      });
+      node.books.push(row); // 同じ本を複数のフォルダに登場させる
     });
-    node.books.push(row);
   });
   return root;
 }
@@ -735,7 +747,10 @@ let editTarget = null; // { type: 'book', id, oldPath } または { type: 'folde
 function collectDistinctPaths() {
   const set = new Set();
   currentRows.forEach(function (r) {
-    if (r['フォルダパス']) set.add(r['フォルダパス']);
+    String(r['フォルダパス'] || '').split(';').forEach(function (p) {
+      const trimmed = p.trim();
+      if (trimmed) set.add(trimmed);
+    });
   });
   return Array.from(set).sort();
 }
@@ -776,7 +791,9 @@ function buildFolderTreeNode(name, node, parentPath) {
 }
 
 // containerId内にフォルダツリーを描画し、葉/枝どちらを選んでもonSelect(path)が呼ばれるようにする
-function renderFolderTreePicker(containerId, onSelect) {
+// multiSelectがtrueの時は、タップのたびに選択/解除をトグルするだけで、
+// ハイライトの管理は呼び出し側(highlightSelectedFolderPaths)に任せる
+function renderFolderTreePicker(containerId, onSelect, multiSelect) {
   const root = buildFolderPathTree();
   let html = '';
   Object.keys(root.children).sort().forEach(function (name) {
@@ -803,24 +820,54 @@ function renderFolderTreePicker(containerId, onSelect) {
       if (toggle) toggle.textContent = wasHidden ? '▼' : '▶';
     }
 
-    // 同時に、このフォルダを移動先として選択状態にする
     if (label) {
-      container.querySelectorAll('.tree-label.tree-selected').forEach(function (el) { el.classList.remove('tree-selected'); });
-      label.classList.add('tree-selected');
+      if (!multiSelect) {
+        // 単一選択モード:このフォルダだけを選択状態にする(フォルダの移動・一括移動用)
+        container.querySelectorAll('.tree-label.tree-selected').forEach(function (el) { el.classList.remove('tree-selected'); });
+        label.classList.add('tree-selected');
+      }
+      // 複数選択モードでは、ハイライトの更新は呼び出し側に任せる
       onSelect(label.dataset.selectPath);
     }
   };
+}
+
+// フォルダパス欄の値("path1;path2")を配列に変換する
+function parsePathList(value) {
+  return String(value || '').split(';').map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function joinPathList(list) {
+  return list.join(';');
+}
+
+// 現在選択中のパス一覧に合わせて、ツリー内のハイライトを更新する(複数選択モード用)
+function highlightSelectedFolderPaths(list) {
+  document.querySelectorAll('#editPathTree .tree-label').forEach(function (el) {
+    el.classList.toggle('tree-selected', list.indexOf(el.dataset.selectPath) !== -1);
+  });
+}
+
+function clearEditPathInput() {
+  document.getElementById('editPathInput').value = '';
+  highlightSelectedFolderPaths([]);
 }
 
 function openBookEditor(id, currentPath) {
   editTarget = { type: 'book', id: id, oldPath: currentPath || '' };
   document.getElementById('editModalTitle').textContent = '本の分類を変更';
   document.getElementById('editModalCurrent').textContent =
-    '現在: ' + (currentPath ? currentPath.replace(/\//g, ' ＞ ') : '(未分類)');
+    '現在: ' + (currentPath ? currentPath.split(';').map(function (p) { return p.replace(/\//g, ' ＞ '); }).join(' / ') : '(未分類)');
   document.getElementById('editPathInput').value = currentPath || '';
   renderFolderTreePicker('editPathTree', function (path) {
-    document.getElementById('editPathInput').value = path;
-  });
+    const input = document.getElementById('editPathInput');
+    const list = parsePathList(input.value);
+    const idx = list.indexOf(path);
+    if (idx === -1) list.push(path); else list.splice(idx, 1); // タップで追加/もう一度タップで解除
+    input.value = joinPathList(list);
+    highlightSelectedFolderPaths(list);
+  }, true);
+  highlightSelectedFolderPaths(parsePathList(currentPath));
   document.getElementById('editModal').classList.remove('hidden');
 }
 
