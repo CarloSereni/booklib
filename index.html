@@ -205,6 +205,7 @@
   <div class="header-actions">
     <button class="merge-toggle" id="mergeModeBtn" onclick="enterSelectionMode('merge')">統合</button>
     <button class="merge-toggle" id="moveModeBtn" onclick="enterSelectionMode('move')">移動</button>
+    <button class="sync" id="restoreBtn" onclick="restoreFromLocalBackup()" style="background:#b5651d; margin-right:6px;">復元</button>
     <button class="sync" id="syncBtn" onclick="syncNow()">更新</button>
   </div>
 </header>
@@ -983,6 +984,42 @@ async function confirmBulkMoveSubmit() {
   } catch (e) {
     setStatus('移動に失敗しました: ' + e.message);
     alert('移動に失敗しました。(' + e.message + ')');
+  }
+}
+
+// この端末に保存されている直近の同期データ(localStorage)を、そのままスプレッドシートへ
+// 書き戻す緊急復元機能。setupSheetの誤実行などでシート側のデータが消えてしまった場合に、
+// この端末が最後に「更新」した時点の内容へ復元できる。
+// 注意: この機能を使う前に「更新」ボタンを押してしまうと、空になったシートの内容で
+// この端末のキャッシュ自体が上書きされてしまい、復元できるデータが無くなるので絶対に押さないこと。
+async function restoreFromLocalBackup() {
+  const rows = loadLocal();
+  if (!rows.length) {
+    alert('この端末にはバックアップとして使えるデータがありません。');
+    return;
+  }
+  if (!confirm('スプレッドシートの内容を、この端末に保存されている ' + rows.length + ' 件のデータで上書きします。\n(スプレッドシート側で誤って全消去してしまった場合の復元用です)\n\nよろしいですか?')) {
+    return;
+  }
+
+  const btn = document.getElementById('restoreBtn');
+  btn.disabled = true;
+  setStatus('スプレッドシートに復元しています...');
+  try {
+    const data = await fetchGasJson({
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'restoreFromBackup', rows: rows })
+    });
+    if (!data.ok) throw new Error(data.error || '不明なエラー');
+    const restored = data.result && data.result.restored;
+    setStatus('復元完了: ' + restored + '件 / ' + new Date().toLocaleString('ja-JP'));
+    alert('復元が完了しました: ' + restored + '件');
+  } catch (e) {
+    setStatus('復元に失敗しました: ' + e.message);
+    alert('復元に失敗しました。Wi-Fi環境を確認して、もう一度お試しください。(' + e.message + ')');
+  } finally {
+    btn.disabled = false;
   }
 }
 
