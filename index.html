@@ -351,18 +351,40 @@ function escapeHtml(s) {
   });
 }
 
+function sleep_(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
 // GAS_WEBAPP_URLへの通信をまとめる共通関数。
-// GAS側がエラーになるとJSONではなくHTMLのエラーページ/ログイン画面が返ってくることがあるため、
-// その場合は原因が分かりやすいメッセージに変換してから投げる
-async function fetchGasJson(options) {
-  const res = await fetch(GAS_WEBAPP_URL, options);
-  const text = await res.text();
+// GAS側がエラーになるとJSONではなくHTMLのエラーページ(Googleのクォータ超過・一時的なサーバー不調・
+// ログイン画面など)が返ってくることがあるが、これらの多くは数秒待って再試行すれば成功する一時的な
+// ものなので、HTMLが返ってきた場合・通信自体が失敗した場合は自動で最大2回まで再試行する。
+// (GAS側で実際に処理が走る前にGoogle側ではじかれているケースなので、再試行しても二重処理の心配はない)
+async function fetchGasJson(options, retriesLeft) {
+  if (retriesLeft === undefined) retriesLeft = 2;
+
+  let text;
+  try {
+    const res = await fetch(GAS_WEBAPP_URL, options);
+    text = await res.text();
+  } catch (networkErr) {
+    if (retriesLeft > 0) {
+      setStatus('通信に失敗しました。再試行しています...');
+      await sleep_(700 * (3 - retriesLeft));
+      return fetchGasJson(options, retriesLeft - 1);
+    }
+    throw new Error('通信に失敗しました(3回試行): ' + networkErr.message);
+  }
+
   try {
     return JSON.parse(text);
   } catch (e) {
     if (text.trim().indexOf('<') === 0) {
+      if (retriesLeft > 0) {
+        setStatus('サーバーが混み合っているようです。再試行しています...');
+        await sleep_(900 * (3 - retriesLeft));
+        return fetchGasJson(options, retriesLeft - 1);
+      }
       throw new Error(
-        'サーバーからHTMLが返ってきました(JSONではありません)。GASを再デプロイ済みか、' +
+        'サーバーからHTMLが返ってきました(JSONではありません/3回試行)。GASを再デプロイ済みか、' +
         'デプロイの公開設定(アクセスできるユーザー)をご確認ください。'
       );
     }
