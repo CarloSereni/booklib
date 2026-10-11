@@ -3,16 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#4a6fa5">
 <title>蔵書ライブラリ</title> 
 
-  <!-- === PWA ホーム画面追加機能（🇰🇷アイコン付き）=== -->
+  <!-- === PWA ホーム画面追加機能 === -->
+  <!-- href は下のスクリプトが動的に生成して差し込む(空のままだとChromeが「アプリ」と認識せず、ショートカットしか作れない) -->
   <link rel="manifest" id="manifest-placeholder" href="">
   
   <!-- iOS対応 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="韓国語クエスト帳">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="蔵書ライブラリ">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27><rect width=%27200%27 height=%27200%27 fill=%27%23f00%27 rx=%2740%27/><text y=%2752%25%27 x=%2750%25%27 font-size=%27110%27 text-anchor=%27middle%27 dominant-baseline=%27middle%27>📚</text></svg>">
+  <link rel="apple-touch-icon" id="apple-touch-icon-placeholder" href="">
+
+<script>
+/* ==== PWAマニフェストとアイコンを動的に生成 ====
+   Chromeが「アプリをインストール」を出す条件:
+   (1) 有効なマニフェスト(name / start_url / display:standalone / 192px&512pxのPNGアイコン)
+   (2) HTTPS配信
+   (3) Service Worker(fetchハンドラ付き)の登録
+   元のコードは(1)のマニフェストのhrefが空だったため、条件を満たせず「ショートカット」止まりでした。 */
+(function () {
+  function makeIcon(size) {
+    var c = document.createElement('canvas');
+    c.width = size; c.height = size;
+    var g = c.getContext('2d');
+    g.fillStyle = '#4a6fa5';
+    g.fillRect(0, 0, size, size);
+    g.font = Math.floor(size * 0.5) + 'px sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('\uD83D\uDCDA', size / 2, size / 2 + size * 0.03); // 📚
+    return c.toDataURL('image/png');
+  }
+
+  // 現在のページURL(クエリ・ハッシュ無し)を基準に、start_url と scope を絶対URLで作る
+  var pageUrl = location.href.split('#')[0].split('?')[0];
+  var scopeUrl = pageUrl.substring(0, pageUrl.lastIndexOf('/') + 1);
+
+  var icon192 = makeIcon(192);
+  var icon512 = makeIcon(512);
+
+  var manifest = {
+    name: '蔵書ライブラリ',
+    short_name: '蔵書',
+    description: '電子書籍の蔵書を一覧・フォルダ分けして管理するアプリ',
+    start_url: pageUrl,
+    scope: scopeUrl,
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#faf9f6',
+    theme_color: '#4a6fa5',
+    icons: [
+      { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+    ]
+  };
+
+  var blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+  document.getElementById('manifest-placeholder').setAttribute('href', URL.createObjectURL(blob));
+  document.getElementById('apple-touch-icon-placeholder').setAttribute('href', icon192);
+})();
+</script>
 
 <style>
   :root {
@@ -1161,6 +1215,7 @@ function init() {
       reg.update();
     }).catch(function (e) {
       console.warn('service worker登録失敗', e);
+      setStatus('Service Workerの登録に失敗しました(アプリとしてインストールできない原因になります): ' + e.message);
     });
   }
 }
