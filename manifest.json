@@ -1,9 +1,32 @@
 {
+  "id": "./",
   "name": "蔵書ライブラリ",
   "short_name": "蔵書",
-  "start_url": "./index.html",
+  "description": "電子書籍の蔵書を一覧・フォルダ分けして管理するアプリ",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#faf9f6",
   "theme_color": "#4a6fa5",
-  "icons": []
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
 }
